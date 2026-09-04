@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<base href="./">
+<meta name="theme-color" content="#07110c">
+<title>My Money</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./style.css">
+<script src="https://cdn.jsdelivr.net/npm/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+<div class="app-shell">
+<aside class="sidebar">
+  <div class="brand"><div class="brand-mark">₹</div><div><strong>My Money</strong><small>Manage. Save. Grow.</small></div></div>
+  <nav id="sideNav">
+    <button class="nav-item active" data-page="dashboard">⌂<span>Dashboard</span></button>
+    <button class="nav-item" data-page="accounts"><i data-lucide="landmark"></i><span>Accounts</span></button>
+    <button class="nav-item" data-page="transactions">⇄<span>Transactions</span></button>
+    <button class="nav-item" data-page="analytics">◔<span>Analytics</span></button>
+    <button class="nav-item" data-page="goals">◎<span>Goals</span></button>
+    <button class="nav-item" data-page="budgets">▤<span>Budgets</span></button>
+    <button class="nav-item" data-page="emis">▣<span>EMIs & Loans</span></button>
+      <button class="nav-item" data-page="settings">⚙<span>Settings</span></button>
+  </nav>
+  <div class="sidebar-card"><small>Total Balance</small><strong id="sideBalance">₹0</strong><p id="sideMessage">Add an account to get started.</p></div>
+  <div class="sidebar-profile">
+    <div class="profile-avatar"><img id="sideAvatarImg" alt="" hidden><span id="sideAvatarText">G</span></div>
+    <div class="profile-copy"><strong id="sideUserName">Guest</strong><small id="sideUserEmail">Not signed in</small></div>
+  </div>
+  <button id="sideGoogleBtn" class="profile-btn">Continue with Google</button>
+</aside>
+
+<main class="main">
+<header class="topbar">
+  <div>
+    <div class="mobile-brand">My Money</div>
+    <h1 id="pageTitle">Good evening 👋</h1>
+    <p id="pageSubtitle">Here's what's happening with your money today.</p>
+  </div>
+  <div class="top-actions">
+    <label class="search">⌕<input id="searchInput" placeholder="Search transactions..."></label>
+    <div class="top-date"><span id="todayLabel">Today</span><span class="calendar-dot">▣</span></div>
+    <button class="icon-btn top-bell" aria-label="Notifications">♧</button>
+    <button id="topGoogleBtn" class="user-pill"><span class="avatar"><img id="avatarImg" alt="" hidden><span id="avatar">G</span></span><span id="userName">Guest</span></button>
+  </div>
+</header>
+<section id="content" class="content"></section>
+</main>
+</div>
+
+<div class="mobile-nav">
+  <button data-page="dashboard"><i data-lucide="home"></i><span>Home</span></button>
+  <button data-page="accounts"><i data-lucide="landmark"></i><span>Accounts</span></button>
+  <button id="mobileAdd" class="mobile-add">+</button>
+  <button data-page="transactions"><i data-lucide="arrow-left-right"></i><span>Activity</span></button>
+  <button id="mobileMore" class="mobile-more-btn" type="button"><i data-lucide="more-horizontal"></i><span>More</span></button>
+</div>
+
+<div id="modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-head"><h2 id="modalTitle">Add</h2><button id="closeModal">×</button></div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+<div id="mobileMoreMenu" class="mobile-more-menu hidden" aria-hidden="true">
+  <div class="mobile-more-backdrop" data-close-mobile-more></div>
+  <div class="mobile-more-sheet">
+    <div class="mobile-more-head"><strong>More</strong><button class="icon-btn" type="button" data-close-mobile-more>✕</button></div>
+    <button type="button" data-mobile-more-page="analytics">📊 <span>Analytics</span></button>
+    <button type="button" data-mobile-more-page="goals">🎯 <span>Goals</span></button>
+    <button type="button" data-mobile-more-page="budgets">💰 <span>Budgets</span></button>
+    <button type="button" data-mobile-more-page="emis">💳 <span>EMIs &amp; Loans</span></button>
+    <button type="button" data-mobile-more-page="settings">⚙️ <span>Settings</span></button>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
