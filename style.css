@@ -359,3 +359,21 @@ body{background:radial-gradient(circle at 72% -10%,#10331e 0,transparent 34%),ra
 .mobile-more-head{display:flex;align-items:center;justify-content:space-between;padding:8px 8px 12px;border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:4px}
 .mobile-more-sheet>button{width:100%;display:flex;align-items:center;gap:12px;padding:14px 12px;border:0;background:transparent;color:inherit;border-radius:12px;font:inherit;text-align:left}
 @media(min-width:769px){.mobile-more-menu{display:none!important}}
+
+/* V38 Goals saving plan */
+.goal-plan-card{margin:0 0 16px;background:linear-gradient(135deg,#0d2115,#0c1710);border-color:#285a37}
+.goal-plan-card.goal-plan-complete{border-color:#245a38}
+.goal-plan-card h2{margin:5px 0 3px;font-size:24px}
+.goal-plan-total{text-align:right;padding-left:16px}
+.goal-plan-total small{display:block;color:var(--muted);font-size:10px}
+.goal-plan-total strong{display:block;font-size:20px;margin-top:5px}
+.goal-plan-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px}
+.goal-plan-stats>div{background:#09130d;border:1px solid var(--line);border-radius:10px;padding:11px}
+.goal-plan-stats small{display:block;color:var(--muted);font-size:10px}
+.goal-plan-stats strong{display:block;margin-top:4px;font-size:15px}
+.goal-saving-plan{display:grid;grid-template-columns:auto auto 1fr;align-items:center;gap:8px;margin:13px 0;padding:10px 12px;border-radius:10px;background:rgba(54,216,106,.08);border:1px solid rgba(54,216,106,.18)}
+.goal-saving-plan span{font-size:10px;color:var(--muted)}
+.goal-saving-plan strong{font-size:13px}
+.goal-saving-plan small{font-size:9px;color:var(--muted);text-align:right}
+.goal-saving-plan.complete{background:rgba(54,216,106,.06)}
+@media(max-width:560px){.goal-plan-stats{grid-template-columns:1fr}.goal-plan-total{padding-left:0}.goal-saving-plan{grid-template-columns:1fr 1fr}.goal-saving-plan small{grid-column:1/-1;text-align:left}}

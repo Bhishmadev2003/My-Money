@@ -16,7 +16,12 @@ const defaultData = {
   loans: []
 };
 
-const today = () => new Date().toISOString().slice(0,10);
+const dateKey = (d=new Date()) => {
+  const x=d instanceof Date ? d : new Date(d);
+  const pad=n=>String(n).padStart(2,"0");
+  return `${x.getFullYear()}-${pad(x.getMonth()+1)}-${pad(x.getDate())}`;
+};
+const today = () => dateKey(new Date());
 const localDateTimeValue = (d=new Date()) => {
   const pad=n=>String(n).padStart(2,"0");
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -34,7 +39,7 @@ const txDisplayDateTime = t => {
 
 let data = load();
 let currentPage = "dashboard";
-let analyticsFrom = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0,10);
+let analyticsFrom = dateKey(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 let analyticsTo = today();
 let analyticsPreset = "30 days";
 let currentUser = null;
@@ -103,6 +108,12 @@ function normalizeCloud(x){
   data.goals.forEach(g=>{ if(!Object.prototype.hasOwnProperty.call(g,"accountId")) g.accountId=""; });
   data.budgets=Array.isArray(data.budgets)?data.budgets:[];
   data.emis=Array.isArray(data.emis)?data.emis:[];
+  data.emis.forEach(e=>{
+    if(!e.startDate){
+      const first=(data.transactions||[]).filter(t=>t.emiId===e.id).sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")))[0];
+      if(first?.date) e.startDate=first.date;
+    }
+  });
   data.loans=Array.isArray(data.loans)?data.loans:[];
   data.accounts.forEach(a=>{ if(!Object.prototype.hasOwnProperty.call(a,"includeInTotal")) a.includeInTotal=!/credit\s*card|card/i.test(String(a.type||"")+" "+String(a.name||"")); });
   syncAutoGoalDeposits();
@@ -155,11 +166,37 @@ function syncAutoGoalDeposits(){
 function totalBalance(){ return data.accounts.filter(a=>a.includeInTotal!==false).reduce((s,a)=>s+Number(a.balance||0),0); }
 function excludedBalance(){ return data.accounts.filter(a=>a.includeInTotal===false).reduce((s,a)=>s+Number(a.balance||0),0); }
 function monthTx(){ const m=today().slice(0,7); return data.transactions.filter(t=>t.date.startsWith(m)); }
-function weekTx(){ const d=new Date(); const day=(d.getDay()+6)%7; const start=new Date(d.getFullYear(),d.getMonth(),d.getDate()-day); const end=new Date(start); end.setDate(start.getDate()+6); const from=start.toISOString().slice(0,10); const to=end.toISOString().slice(0,10); return data.transactions.filter(t=>t.date>=from&&t.date<=to); }
+function weekTx(){
+  const d=new Date();
+  const day=(d.getDay()+6)%7;
+  const start=new Date(d.getFullYear(),d.getMonth(),d.getDate()-day,12,0,0);
+  const end=new Date(start); end.setDate(start.getDate()+6);
+  const from=dateKey(start),to=dateKey(end);
+  return data.transactions.filter(t=>t.date>=from&&t.date<=to);
+}
 function sum(list,type){ return list.filter(t=>t.type===type).reduce((s,t)=>s+Number(t.amount),0); }
 function greeting(){ const h=new Date().getHours(); if(h<5) return "Good night"; if(h<12) return "Good morning"; if(h<17) return "Good afternoon"; if(h<21) return "Good evening"; return "Good night"; }
-function weeklyGoalRequired(){ const now=new Date(); return (data.goals||[]).reduce((s,g)=>{ const remaining=Math.max(0,Number(g.target||0)-Number(g.saved||0)); if(!remaining||!g.targetDate) return s; const target=new Date(g.targetDate+"T12:00:00"); const days=Math.max(1,Math.ceil((target-now)/(1000*60*60*24))); return s+remaining/(days/7); },0); }
-function upcomingCommitments7(){ const end=new Date(); end.setDate(end.getDate()+7); const endKey=end.toISOString().slice(0,10); return upcomingEmis().filter(e=>e.nextDate>=today()&&e.nextDate<=endKey).reduce((s,e)=>s+Math.min(Number(e.monthly||0),Number(e.remainingAmount||0)),0); }
+function goalMonthsRemaining(g){
+  if(!g.targetDate) return null;
+  const now=new Date();
+  const target=new Date(`${g.targetDate}T12:00:00`);
+  if(Number.isNaN(target.getTime())) return null;
+  const monthDiff=(target.getFullYear()-now.getFullYear())*12+(target.getMonth()-now.getMonth());
+  return Math.max(1,monthDiff+(target.getDate()>=now.getDate()?1:0));
+}
+function goalMonthlyRequired(g){
+  const remaining=Math.max(0,Number(g.target||0)-Number(g.saved||0));
+  const months=goalMonthsRemaining(g);
+  if(!remaining||months===null) return 0;
+  return remaining/months;
+}
+function overallGoalPlan(){
+  const items=(data.goals||[]).map(g=>({g,remaining:Math.max(0,Number(g.target||0)-Number(g.saved||0)),months:goalMonthsRemaining(g),monthly:goalMonthlyRequired(g)}));
+  const active=items.filter(x=>x.remaining>0);
+  return {items,active,totalTarget:(data.goals||[]).reduce((s,g)=>s+Math.max(0,Number(g.target||0)),0),totalSaved:(data.goals||[]).reduce((s,g)=>s+Math.max(0,Number(g.saved||0)),0),totalRemaining:active.reduce((s,x)=>s+x.remaining,0),monthly:active.reduce((s,x)=>s+x.monthly,0)};
+}
+function weeklyGoalRequired(){ return overallGoalPlan().monthly/4.34524; }
+function upcomingCommitments7(){ const end=new Date(); end.setDate(end.getDate()+7); const endKey=dateKey(end); return upcomingEmis().filter(e=>e.nextDate>=today()&&e.nextDate<=endKey).reduce((s,e)=>s+Math.min(Number(e.monthly||0),Number(e.remainingAmount||0)),0); }
 
 
 function accountIcon(a){
@@ -226,7 +263,7 @@ function dashboard(){
   const labels=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
   const points=[0,1,2,3,4,5,6].map(i=>{
     const x=new Date(d.getFullYear(),d.getMonth(),d.getDate()-monday+i);
-    const ds=x.toISOString().slice(0,10);
+    const ds=dateKey(x);
     return {label:labels[i],date:x, value:sum(wt.filter(t=>t.date===ds),"expense")};
   });
   const max=Math.max(1,...points.map(p=>p.value));
@@ -303,7 +340,7 @@ function transactions(){
 }
 
 function analytics(){
-  const monthStart=new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10);
+  const monthStart=dateKey(new Date(new Date().getFullYear(),new Date().getMonth(),1));
   const from=analyticsFrom||monthStart,to=analyticsTo||today();
   const rangeTx=data.transactions.filter(t=>t.date>=from&&t.date<=to);
   const income=sum(rangeTx,"income"),expense=sum(rangeTx,"expense"),net=income-expense;
@@ -459,11 +496,19 @@ function analytics(){
   </div>`;
 }
 function goals(){
+  const plan=overallGoalPlan();
+  const noDeadline=plan.active.filter(x=>x.months===null).length;
   return `<div class="section-row page-head"><div><h2>Goals</h2><p class="muted">Each goal is linked to an account. Adding money reserves it from that account and does not count as spending.</p></div><button class="primary" data-action="add-goal">+ Add Goal</button></div>
-  <div class="grid2">${data.goals.map(g=>{const target=Number(g.target||0),saved=Number(g.saved||0),remaining=Math.max(0,target-saved),pct=Math.min(100,target?saved/target*100:0);const linked=data.accounts.find(a=>a.id===g.accountId);return `<div class="card">
+  <div class="card goal-plan-card ${plan.monthly>0?'':'goal-plan-complete'}">
+    <div class="section-row"><div><div class="eyebrow">🎯 OVERALL SAVING PLAN</div><h2>${plan.monthly>0?`${money(plan.monthly)} / month`:'All goals completed 🎉'}</h2><small class="muted">Based on all active goals, their saved amounts and target deadlines.</small></div><div class="goal-plan-total"><small>Total remaining</small><strong>${money(plan.totalRemaining)}</strong></div></div>
+    ${plan.monthly>0?`<div class="goal-plan-stats"><div><small>Total target</small><strong>${money(plan.totalTarget)}</strong></div><div><small>Total saved</small><strong>${money(plan.totalSaved)}</strong></div><div><small>Monthly saving needed</small><strong>${money(plan.monthly)}</strong></div></div>`:`<p class="muted">You have reached every goal target.</p>`}
+    ${noDeadline?`<small class="muted block">ℹ️ ${noDeadline} active goal${noDeadline===1?'':'s'} has no target date and is not included in the monthly plan.</small>`:''}
+  </div>
+  <div class="grid2">${data.goals.map(g=>{const target=Number(g.target||0),saved=Number(g.saved||0),remaining=Math.max(0,target-saved),pct=Math.min(100,target?saved/target*100:0),monthly=goalMonthlyRequired(g),months=goalMonthsRemaining(g);const linked=data.accounts.find(a=>a.id===g.accountId);return `<div class="card">
     <div class="section-row"><div><h2>${esc(g.name)}</h2><small>${g.targetDate?`Target ${esc(g.targetDate)}`:"No target date"}</small></div><div class="row-actions"><button class="secondary ghost" data-edit-goal="${g.id}">Edit</button><button class="danger ghost" data-delete-goal="${g.id}">Delete</button></div></div>
     <div class="goal-linked-account"><span>🏦</span><div><small>Linked account</small><strong>${linked?esc(linked.name):"Not linked"}</strong></div></div>
     <div class="grid3 goal-stats"><div><small>Saved</small><strong>${money(saved)}</strong></div><div><small>Remaining</small><strong>${money(remaining)}</strong></div><div><small>Target</small><strong>${money(target)}</strong></div></div>
+    ${remaining>0&&g.targetDate?`<div class="goal-saving-plan"><span>📅 Save</span><strong>${money(monthly)}/month</strong><small>${months} month${months===1?'':'s'} remaining</small></div>`:remaining>0?`<div class="goal-saving-plan"><span>📅 Saving plan</span><strong>Set a target date</strong><small>Required monthly saving will appear here.</small></div>`:`<div class="goal-saving-plan complete"><span>✓ Goal complete</span><strong>₹0/month</strong><small>Target achieved</small></div>`}
     <div class="progress"><i style="width:${pct}%"></i></div><small>${pct.toFixed(0)}% complete</small>
     ${linked?(g.autoTrackAccount?`<small class="muted block goal-reserve">🔗 Auto-tracked from ${esc(linked.name)} · goal deposit follows this account's current balance.</small>`:`<small class="muted block goal-reserve">Reserved from ${esc(linked.name)} · available balance ${money(Math.max(0,Number(linked.balance||0)-saved))}</small>`):`<small class="danger-text block">Link an account before adding money.</small>`}
     <button class="primary full goal-add-btn" data-add-goal-money="${g.id}" ${remaining<=0||!linked||g.autoTrackAccount?'disabled':''}>+ Add Money from ${linked?esc(linked.name):'Linked Account'}</button>
@@ -500,21 +545,28 @@ function emiIsPaidForCycle(e,year,monthIndex){
 }
 function calculateEmiNextDate(e){
   const now=new Date();
-  const day=Number(e.paymentDay||1);
+  const day=Math.max(1,Math.min(31,Number(e.paymentDay||1)));
+  const startDate=e.startDate?new Date(`${e.startDate}T12:00:00`):null;
+  if(startDate && !Number.isNaN(startDate.getTime())){
+    const todayKey=dateKey(now);
+    const startKey=dateKey(startDate);
+    if(todayKey < startKey) return startKey;
 
-  // Find the current month's scheduled due date.
+    // The first EMI is anchored to the selected start date. Once that cycle
+    // is paid, future cycles use the selected payment day each month.
+    if(now.getFullYear()===startDate.getFullYear() && now.getMonth()===startDate.getMonth()){
+      if(emiIsPaidForCycle(e,startDate.getFullYear(),startDate.getMonth())){
+        return dateKey(emiDateForMonth(now.getFullYear(),now.getMonth()+1,day));
+      }
+      return startKey;
+    }
+  }
+
   let cycle=emiCycleForDate(now.getFullYear(),now.getMonth(),day);
-
-  // If this month's EMI payment exists, the next due is next month.
-  // This is based on the TRANSACTION DATE, so editing the payment date
-  // immediately moves the paid cycle.
   if(emiIsPaidForCycle(e,cycle.year,cycle.month)){
     cycle=emiCycleForDate(cycle.year,cycle.month+1,day);
   }
-
-  // If the current cycle is already in the past and hasn't been paid,
-  // keep the current month's due date so the app correctly shows it as overdue.
-  return cycle.due.toISOString().slice(0,10);
+  return dateKey(cycle.due);
 }
 function upcomingEmis(){
   return (data.emis||[])
@@ -535,7 +587,7 @@ function openLoanPaymentModal(loanId){
     <div class="modal-head"><div><h2>${isLent?'💚 Record Money Received':'❤️ Record Payment'}</h2><p class="muted">${esc(l.person)} · Remaining ${money(remaining)}</p></div><button class="icon-btn" data-close-modal>✕</button></div>
     <form id="loan-payment-form">
       <label>Amount<input name="amount" type="number" min="0.01" max="${remaining}" step="0.01" required placeholder="0.00"></label>
-      <label>Date<input name="date" type="date" value="${new Date().toISOString().slice(0,10)}" required></label>
+      <label>Date<input name="date" type="date" value="${today()}" required></label>
       <label>Time<input name="time" type="time" value="${new Date().toTimeString().slice(0,5)}" required></label>
       <label>${isLent?'Money received into':'Payment made from'} account<select name="accountId" required><option value="">Select account</option>${accounts.map(a=>`<option value="${a.id}">${esc(a.name)} · ${money(a.balance)}</option>`).join("")}</select></label>
       <label>Note (optional)<input name="note" maxlength="120" placeholder="${isLent?'Partial repayment':'Loan payment'}"></label>
@@ -681,8 +733,8 @@ function bindPageActions(){
   const af=$("analyticsFrom"), at=$("analyticsTo");
   if(af) af.onchange=()=>{ analyticsFrom=af.value; analyticsPreset="custom"; if(analyticsTo && analyticsFrom>analyticsTo) analyticsTo=analyticsFrom; render(); };
   if(at) at.onchange=()=>{ analyticsTo=at.value; analyticsPreset="custom"; if(analyticsFrom && analyticsTo<analyticsFrom) analyticsFrom=analyticsTo; render(); };
-  const ar=$("analyticsReset"); if(ar) ar.onclick=()=>{ analyticsFrom=new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10); analyticsTo=today(); analyticsPreset="This Month"; render(); };
-  document.querySelectorAll("[data-analytics-range]").forEach(b=>b.onclick=()=>{ const n=Number(b.dataset.analyticsRange); const d=new Date(); d.setDate(d.getDate()-n+1); analyticsFrom=d.toISOString().slice(0,10); analyticsTo=today(); analyticsPreset=b.textContent; render(); });
+  const ar=$("analyticsReset"); if(ar) ar.onclick=()=>{ analyticsFrom=dateKey(new Date(new Date().getFullYear(),new Date().getMonth(),1)); analyticsTo=today(); analyticsPreset="This Month"; render(); };
+  document.querySelectorAll("[data-analytics-range]").forEach(b=>b.onclick=()=>{ const n=Number(b.dataset.analyticsRange); const d=new Date(); d.setDate(d.getDate()-n+1); analyticsFrom=dateKey(d); analyticsTo=today(); analyticsPreset=b.textContent; render(); });
   const ac=document.querySelector("[data-analytics-custom]"); if(ac) ac.onclick=()=>{analyticsPreset="custom"; render();};
 
   document.querySelectorAll("[data-toggle-account-total]").forEach(b=>b.onchange=()=>{const a=data.accounts.find(x=>x.id===b.dataset.toggleAccountTotal);if(a){a.includeInTotal=b.checked;save();render();toast(b.checked?`${a.name} included in Total Money.`:`${a.name} excluded from Total Money.`);}});
@@ -922,7 +974,8 @@ function openEmi(editId=null){
     <div class="field"><label>Monthly EMI</label><input name="monthly" type="number" min="0.01" step="0.01" value="${Number(e.monthly||0)}" required></div>
     <div class="field"><label>Total EMI count</label><input name="totalEmis" type="number" min="1" step="1" value="${Number(e.totalEmis||1)}" required></div>
     <div class="field"><label>EMIs already paid</label><input name="paidEmis" type="number" min="0" step="1" value="${Number(e.paidEmis||0)}" required></div>
-    <div class="field"><label>Payment date</label><input name="paymentDay" type="number" min="1" max="31" value="${Number(e.paymentDay||10)}" required></div>
+    <div class="field"><label>EMI Start Date</label><input name="startDate" type="date" value="${esc(e.startDate||"")}" required></div>
+    <div class="field"><label>Payment date</label><input name="paymentDay" type="number" min="1" max="31" value="${Number(e.paymentDay||((e.startDate||"").slice(8,10))||10)}" required></div>
     <div class="field full"><label>Payment account</label><select name="paymentAccount">${options||'<option value="">Add an account first</option>'}</select></div>
     <button class="primary full">${existing?"Save Changes":"Save EMI"}</button>
   </form>`);
@@ -934,7 +987,9 @@ function openEmi(editId=null){
     const obj=existing||{id:uid("emi")};
     obj.name=f.get("name").trim();obj.lender=f.get("lender").trim();obj.totalAmount=total;
     obj.remainingAmount=Math.max(0,total-paidAmount);obj.monthly=Number(f.get("monthly"));obj.totalEmis=totalEmis;
-    obj.paidEmis=paidEmis;obj.remainingEmis=Math.max(0,totalEmis-paidEmis);obj.paymentDay=Number(f.get("paymentDay"));obj.paymentAccount=f.get("paymentAccount"); obj.nextDate=(obj.remainingEmis>0&&obj.remainingAmount>0)?(obj.nextDate||calculateEmiNextDate(obj)):null;
+    const startDate=f.get("startDate");
+    if(!startDate)return toast("Select an EMI start date.");
+    obj.paidEmis=paidEmis;obj.remainingEmis=Math.max(0,totalEmis-paidEmis);obj.startDate=startDate;obj.paymentDay=Number(f.get("paymentDay"));obj.paymentAccount=f.get("paymentAccount"); obj.nextDate=(obj.remainingEmis>0&&obj.remainingAmount>0)?calculateEmiNextDate(obj):null;
     data.emis=data.emis||[]; if(!existing)data.emis.push(obj);
     save();closeModal();render();toast(existing?"EMI updated.":"EMI added and included in Smart Money.");
   };
@@ -968,7 +1023,7 @@ function payEmi(id){
     e.paidEmis=Math.min(Number(e.totalEmis||0),Number(e.paidEmis||0)+1);
     e.remainingEmis=Math.max(0,Number(e.totalEmis||0)-Number(e.paidEmis||0));
     if(e.remainingAmount<=0 || e.remainingEmis<=0)e.nextDate=null;
-    else e.nextDate=emiDateForMonth(new Date(f.get("date")+"T12:00:00").getFullYear(),new Date(f.get("date")+"T12:00:00").getMonth()+1,Number(e.paymentDay||1)).toISOString().slice(0,10);
+    else e.nextDate=dateKey(emiDateForMonth(new Date(f.get("date")+"T12:00:00").getFullYear(),new Date(f.get("date")+"T12:00:00").getMonth()+1,Number(e.paymentDay||1)));
     data.transactions.push({id:uid("tx"),type:"expense",amount:payment,date:f.get("date"),timestamp:`${f.get("date")}T${f.get("time")||"00:00"}`,note:f.get("note")||`EMI payment · ${e.name}`,category:f.get("category")||"Bills & Utilities",accountName:account.name,accountId:account.id,emiId:e.id,transactionKind:"emi_payment",emiBefore:before});
     save();closeModal();render();toast(e.remainingEmis>0?"EMI Payment. Next payment date updated.":"EMI fully paid. Congratulations!");
   };
@@ -1071,7 +1126,7 @@ function deleteTx(id){
           e.nextDate=null;
         }else if(otherPayments.length){
           const last=new Date(String(otherPayments[0].date)+"T12:00:00");
-          e.nextDate=emiDateForMonth(last.getFullYear(),last.getMonth()+1,Number(e.paymentDay||1)).toISOString().slice(0,10);
+          e.nextDate=dateKey(emiDateForMonth(last.getFullYear(),last.getMonth()+1,Number(e.paymentDay||1)));
         }else if(before?.nextDate){
           e.nextDate=before.nextDate;
         }else{
