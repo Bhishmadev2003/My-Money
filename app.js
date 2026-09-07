@@ -38,7 +38,6 @@ const txDisplayDateTime = t => {
 };
 
 let data = load();
-if(moveAlreadyCompletedEmisToActivity()) localStorage.setItem(KEY, JSON.stringify(data));
 let currentPage = "dashboard";
 let analyticsFrom = dateKey(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 let analyticsTo = today();
@@ -65,27 +64,6 @@ function load(){
   try { return {...structuredClone(defaultData), ...JSON.parse(localStorage.getItem(KEY)||"{}")}; }
   catch { return structuredClone(defaultData); }
 }
-
-// One-time migration: if a final EMI was already paid in an older version,
-// keep its payment transaction in Activity and remove the completed EMI from
-// the active EMI list.
-function moveAlreadyCompletedEmisToActivity(){
-  if(!Array.isArray(data?.emis) || !Array.isArray(data?.transactions)) return false;
-  const completedIds=new Set();
-  data.emis.forEach(e=>{
-    const total=Number(e.totalEmis||0);
-    const paid=Number(e.paidEmis||0);
-    const remainingEmis=Number(e.remainingEmis);
-    const remainingAmount=Number(e.remainingAmount);
-    const linkedPayments=data.transactions.filter(t=>t.emiId===e.id && (t.transactionKind==="emi_payment" || t.type==="expense"));
-    const hasFinalPayment=linkedPayments.length>0 && (remainingEmis<=0 || remainingAmount<=0 || (total>0 && paid>=total));
-    if(hasFinalPayment) completedIds.add(e.id);
-  });
-  if(!completedIds.size) return false;
-  data.emis=data.emis.filter(e=>!completedIds.has(e.id));
-  return true;
-}
-
 function save(){
   syncAutoGoalDeposits();
   localStorage.setItem(KEY, JSON.stringify(data));
@@ -137,7 +115,6 @@ function normalizeCloud(x){
     }
   });
   data.loans=Array.isArray(data.loans)?data.loans:[];
-  moveAlreadyCompletedEmisToActivity();
   data.accounts.forEach(a=>{ if(!Object.prototype.hasOwnProperty.call(a,"includeInTotal")) a.includeInTotal=!/credit\s*card|card/i.test(String(a.type||"")+" "+String(a.name||"")); });
   syncAutoGoalDeposits();
 }
@@ -699,7 +676,7 @@ function emis(){
       <div>${money(e.totalAmount)}</div><div>${money(e.monthly)}</div><div>${Number(e.totalEmis||0)}</div><div>${Number(e.paidEmis||0)}</div><div>${Number(e.remainingEmis||0)}</div>
       <div>${money(paid)}</div><div><strong>${money(e.remainingAmount)}</strong><div class="mini-progress"><i style="width:${pct}%"></i></div></div>
       <div>${esc(due)}</div><div class="emi-account">${account?`🏦 ${esc(account.name)}`:"—"}</div>
-      <div class="row-actions emi-actions"><button class="primary ghost" data-pay-emi="${e.id}">Mark Paid</button><button class="secondary ghost" data-edit-emi="${e.id}">Edit</button><button class="danger ghost" data-delete-emi="${e.id}">Delete</button></div>
+      <div class="row-actions emi-actions"><button class="primary ghost" data-pay-emi="${e.id}">Complete</button><button class="secondary ghost" data-edit-emi="${e.id}">Edit</button><button class="danger ghost" data-delete-emi="${e.id}">Delete</button></div>
     </div>`;
   }).join("");
 
@@ -1027,18 +1004,18 @@ function payEmi(id){
   const payment=Math.min(Number(e.monthly||0),remaining);
   if(payment<=0)return toast("Invalid EMI amount.");
   const categories=[...new Set([...(data.categories||[]),"Bills & Utilities"])];
-  modal("Pay EMI",`<form id="payEmiForm" class="form-grid">
+  modal("Complete EMI",`<form id="payEmiForm" class="form-grid">
     <div class="field full"><label>EMI</label><input value="${esc(e.name)} · ${money(payment)} · ${esc(account.name)}" disabled></div>
     <div class="field full"><label>Category</label><select name="category">${categories.map(c=>`<option ${c==="Bills & Utilities"?'selected':''}>${esc(c)}</option>`).join("")}</select></div>
     <div class="field"><label>Date</label><input name="date" type="date" value="${today()}" required></div>
     <div class="field"><label>Time</label><input name="time" type="time" value="${new Date().toTimeString().slice(0,5)}" required></div>
     <div class="field full"><label>Note</label><input name="note" value="EMI payment · ${esc(e.name)}" placeholder="Optional note"></div>
-    <button class="primary full">Pay ${money(payment)}</button>
+    <button class="primary full">Complete EMI · ${money(payment)}</button>
   </form>`);
   $("payEmiForm").onsubmit=ev=>{
     ev.preventDefault();
     if(Number(account.balance||0)<payment)return toast("Insufficient balance in payment account.");
-    if(!confirm(`Pay ${money(payment)} for ${e.name} from ${account.name}?`))return;
+    if(!confirm(`Complete ${e.name} by recording ${money(payment)} from ${account.name}?`))return;
     const f=new FormData(ev.target);
     const before={remainingAmount:remaining,paidEmis:Number(e.paidEmis||0),remainingEmis:Number(e.remainingEmis||0),nextDate:e.nextDate||calculateEmiNextDate(e)};
     account.balance-=payment;
@@ -1053,7 +1030,7 @@ function payEmi(id){
     if(completed){
       data.emis=(data.emis||[]).filter(x=>x.id!==e.id);
     }
-    save();closeModal();render();toast(completed?"EMI fully paid and moved to Activity.":"EMI Payment. Next payment date updated.");
+    save();closeModal();render();toast(completed?"EMI completed and moved to Activity.":"EMI completed. Next payment date updated.");
   };
 }
 function deleteEmi(id){if(!confirm("Delete this EMI?"))return;data.emis=(data.emis||[]).filter(e=>e.id!==id);save();render();toast("EMI deleted.");}
