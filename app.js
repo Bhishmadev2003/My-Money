@@ -196,6 +196,13 @@ function overallGoalPlan(){
   return {items,active,totalTarget:(data.goals||[]).reduce((s,g)=>s+Math.max(0,Number(g.target||0)),0),totalSaved:(data.goals||[]).reduce((s,g)=>s+Math.max(0,Number(g.saved||0)),0),totalRemaining:active.reduce((s,x)=>s+x.remaining,0),monthly:active.reduce((s,x)=>s+x.monthly,0)};
 }
 function weeklyGoalRequired(){ return overallGoalPlan().monthly/4.34524; }
+function goalLinkedAccountIds(){
+  return new Set((data.goals||[]).map(g=>g.accountId).filter(Boolean));
+}
+function goalReservedBalance(){
+  const ids=goalLinkedAccountIds();
+  return (data.accounts||[]).filter(a=>ids.has(a.id) && a.includeInTotal!==false).reduce((s,a)=>s+Math.max(0,Number(a.balance||0)),0);
+}
 function upcomingCommitments7(){ const end=new Date(); end.setDate(end.getDate()+7); const endKey=dateKey(end); return upcomingEmis().filter(e=>e.nextDate>=today()&&e.nextDate<=endKey).reduce((s,e)=>s+Math.min(Number(e.monthly||0),Number(e.remainingAmount||0)),0); }
 
 
@@ -247,17 +254,19 @@ function dashboard(){
   const aiPreview="AI considers your cash-flow, spending history, goals, EMIs and upcoming commitments. Your long-term accumulated balance is context only and is never treated as weekly spending money.";
   const goalTotal=data.goals.reduce((s,g)=>s+Math.max(0,Number(g.target||0)-Number(g.saved||0)),0);
   const goalWeekly=weeklyGoalRequired();
+  const goalReserve=goalReservedBalance();
   const weeklyIncome=sum(wt,"income");
   const commitment7=upcomingCommitments7();
-  const safeRaw=weeklyIncome-weekly-commitment7-goalWeekly;
+  const safeRaw=weeklyIncome-weekly-commitment7-goalWeekly-goalReserve;
   const safePreview=Math.max(0,safeRaw);
   const safeReasons=[];
   if(weeklyIncome<=0) safeReasons.push("No income recorded for this week");
   if(weekly>0) safeReasons.push(`${money(weekly)} already spent this week`);
   if(commitment7>0) safeReasons.push(`${money(commitment7)} upcoming EMI/loan commitments`);
   if(goalWeekly>0) safeReasons.push(`${money(goalWeekly)} needed for goal funding`);
+  if(goalReserve>0) safeReasons.push(`${money(goalReserve)} reserved in goal-linked account${goalReserve===1?'':'s'}`);
   const safeExplanation=safePreview>0
-    ? `After this week's income, spending, commitments and goal funding, ${money(safePreview)} is currently available for flexible spending.`
+    ? `After this week's income, spending, commitments, goal funding and money already reserved in goal-linked accounts, ${money(safePreview)} is currently available for flexible spending.`
     : `No flexible spending money is available right now. ${safeReasons.length?safeReasons.join(" · ")+".":"Add income, spending and commitment data for a more accurate decision."}`;
   const d=new Date(); const monday=(d.getDay()+6)%7;
   const labels=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
@@ -294,7 +303,7 @@ function dashboard(){
       <b>${safeRaw<=0?'No money left to spend':'currently safe to spend'}</b>
       <p>${aiPreview}</p>
       <div class="smart-reason ${safeRaw<=0?'warning':''}"><strong>${safeRaw<=0?'⚠️ Why ₹0?':'✓ How this is calculated'}</strong><span>${esc(safeExplanation)}</span></div>
-      <div class="smart-formula"><span>Weekly income</span><b>${money(weeklyIncome)}</b><span>− Spending</span><b>${money(weekly)}</b><span>− Commitments</span><b>${money(commitment7)}</b><span>− Goal funding</span><b>${money(goalWeekly)}</b></div>
+      <div class="smart-formula"><span>Weekly income</span><b>${money(weeklyIncome)}</b><span>− Spending</span><b>${money(weekly)}</b><span>− Commitments</span><b>${money(commitment7)}</b><span>− Goal funding</span><b>${money(goalWeekly)}</b><span>− Goal account reserve</span><b>${money(goalReserve)}</b></div>
       <div class="smart-stats"><div>This week<strong>${money(weekly)}</strong></div><div>Goals remaining<strong>${money(goalTotal)}</strong></div><div>Monthly savings<strong>${money(savings)}</strong></div></div>
       <button class="primary smart-button" data-action="smart">Ask AI for My Money Decision →</button>
     </div>
@@ -756,9 +765,11 @@ async function openSmartDecision(){
     categories:data.categories,
     thisMonth:{income:sum(mt,"income"),expense:sum(mt,"expense"),savings:sum(mt,"income")-sum(mt,"expense")},
     thisWeek:{income:sum(wt,"income"),expense:sum(wt,"expense")},
+    goalLinkedAccountReserve:goalReservedBalance(),
+    safeToSpendFormula:"Weekly income - weekly spending - upcoming EMI/loan commitments - weekly goal funding - balances of goal-linked accounts.",
     transactionHistory:[...data.transactions].sort((a,b)=>b.date.localeCompare(a.date)),
     spendingDefinition:"Weekly spending = expense transactions dated Monday-Sunday of the current local week. Exclude income, transfers between own accounts, balances, and long-term accumulated savings.",
-    safeSpendRule:"The app-calculated dashboard safe-to-spend value is authoritative. Do not replace it with total account balance or liquid balance. Consider every supplied EMI, loan commitment, goal reserve/contribution and actual spending. If the safe amount is below zero, display ₹0 and explain why."
+    safeSpendRule:"The app-calculated dashboard safe-to-spend value is authoritative. Do not replace it with total account balance. Exclude money already held in accounts linked to goals from spendable money, and consider every supplied EMI, loan commitment, goal funding and actual spending. If the safe amount is below zero, display ₹0 and explain why."
   };
   modal("🧠 AI Money Decision",`<div class="ai-loading"><div class="big-emoji">🧠</div><h3>Analyzing your money…</h3><p class="muted">AI is reviewing your spending, goals, balances and recent transactions.</p></div>`);
   try{
