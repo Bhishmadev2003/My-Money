@@ -38,6 +38,7 @@ const txDisplayDateTime = t => {
 };
 
 let data = load();
+if(moveAlreadyCompletedEmisToActivity()) localStorage.setItem(KEY, JSON.stringify(data));
 let currentPage = "dashboard";
 let analyticsFrom = dateKey(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 let analyticsTo = today();
@@ -64,6 +65,27 @@ function load(){
   try { return {...structuredClone(defaultData), ...JSON.parse(localStorage.getItem(KEY)||"{}")}; }
   catch { return structuredClone(defaultData); }
 }
+
+// One-time migration: if a final EMI was already paid in an older version,
+// keep its payment transaction in Activity and remove the completed EMI from
+// the active EMI list.
+function moveAlreadyCompletedEmisToActivity(){
+  if(!Array.isArray(data?.emis) || !Array.isArray(data?.transactions)) return false;
+  const completedIds=new Set();
+  data.emis.forEach(e=>{
+    const total=Number(e.totalEmis||0);
+    const paid=Number(e.paidEmis||0);
+    const remainingEmis=Number(e.remainingEmis);
+    const remainingAmount=Number(e.remainingAmount);
+    const linkedPayments=data.transactions.filter(t=>t.emiId===e.id && (t.transactionKind==="emi_payment" || t.type==="expense"));
+    const hasFinalPayment=linkedPayments.length>0 && (remainingEmis<=0 || remainingAmount<=0 || (total>0 && paid>=total));
+    if(hasFinalPayment) completedIds.add(e.id);
+  });
+  if(!completedIds.size) return false;
+  data.emis=data.emis.filter(e=>!completedIds.has(e.id));
+  return true;
+}
+
 function save(){
   syncAutoGoalDeposits();
   localStorage.setItem(KEY, JSON.stringify(data));
@@ -115,6 +137,7 @@ function normalizeCloud(x){
     }
   });
   data.loans=Array.isArray(data.loans)?data.loans:[];
+  moveAlreadyCompletedEmisToActivity();
   data.accounts.forEach(a=>{ if(!Object.prototype.hasOwnProperty.call(a,"includeInTotal")) a.includeInTotal=!/credit\s*card|card/i.test(String(a.type||"")+" "+String(a.name||"")); });
   syncAutoGoalDeposits();
 }
@@ -1024,8 +1047,13 @@ function payEmi(id){
     e.remainingEmis=Math.max(0,Number(e.totalEmis||0)-Number(e.paidEmis||0));
     if(e.remainingAmount<=0 || e.remainingEmis<=0)e.nextDate=null;
     else e.nextDate=dateKey(emiDateForMonth(new Date(f.get("date")+"T12:00:00").getFullYear(),new Date(f.get("date")+"T12:00:00").getMonth()+1,Number(e.paymentDay||1)));
-    data.transactions.push({id:uid("tx"),type:"expense",amount:payment,date:f.get("date"),timestamp:`${f.get("date")}T${f.get("time")||"00:00"}`,note:f.get("note")||`EMI payment · ${e.name}`,category:f.get("category")||"Bills & Utilities",accountName:account.name,accountId:account.id,emiId:e.id,transactionKind:"emi_payment",emiBefore:before});
-    save();closeModal();render();toast(e.remainingEmis>0?"EMI Payment. Next payment date updated.":"EMI fully paid. Congratulations!");
+    const emiSnapshot=structuredClone(e);
+    data.transactions.push({id:uid("tx"),type:"expense",amount:payment,date:f.get("date"),timestamp:`${f.get("date")}T${f.get("time")||"00:00"}`,note:f.get("note")||`EMI payment · ${e.name}`,category:f.get("category")||"Bills & Utilities",accountName:account.name,accountId:account.id,emiId:e.id,transactionKind:"emi_payment",emiBefore:before,emiSnapshot});
+    const completed=e.remainingEmis<=0 || e.remainingAmount<=0;
+    if(completed){
+      data.emis=(data.emis||[]).filter(x=>x.id!==e.id);
+    }
+    save();closeModal();render();toast(completed?"EMI fully paid and moved to Activity.":"EMI Payment. Next payment date updated.");
   };
 }
 function deleteEmi(id){if(!confirm("Delete this EMI?"))return;data.emis=(data.emis||[]).filter(e=>e.id!==id);save();render();toast("EMI deleted.");}
@@ -1106,7 +1134,14 @@ function deleteTx(id){
     const a=findAccount(t.accountId,t.accountName);
     if(a)a.balance+=amount;
     if(t.emiId){
-      const e=(data.emis||[]).find(x=>x.id===t.emiId);
+      let e=(data.emis||[]).find(x=>x.id===t.emiId);
+      // A fully completed EMI is removed from the active EMI list. If its payment
+      // is later deleted from Activity, restore the EMI from the saved snapshot.
+      if(!e && t.emiSnapshot){
+        e=structuredClone(t.emiSnapshot);
+        data.emis=data.emis||[];
+        if(!data.emis.some(x=>x.id===e.id)) data.emis.push(e);
+      }
       if(e){
         const before=t.emiBefore;
         if(before && Number.isFinite(Number(before.remainingAmount))){
