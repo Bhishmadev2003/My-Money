@@ -2,6 +2,7 @@ import { db, login, logout, watchAuth } from "./auth.js";
 import { doc, getDoc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
 
 const KEY = "my-money-data-v2";
+let dashboardWeekOffset = 0;
 const defaultData = {
   accounts: [
     {id:"a1", name:"SBI Savings", type:"Bank", balance:0},
@@ -67,14 +68,13 @@ function load(){
 function save(){
   syncAutoGoalDeposits();
   localStorage.setItem(KEY, JSON.stringify(data));
-  if(currentUser && cloudReady) queueCloudSave();
+  // Every change is pushed to Firestore immediately; do not rely on a delayed
+  // browser-only save that can be lost when browsing data is cleared.
+  if(currentUser && cloudReady) saveCloud();
+  else if(!currentUser) toast("Saved locally. Sign in with Google to protect your data.");
 }
-let cloudSaveTimer;
 let cloudRevision = 0;
-function queueCloudSave(){
-  clearTimeout(cloudSaveTimer);
-  cloudSaveTimer=setTimeout(saveCloud,350);
-}
+function queueCloudSave(){ saveCloud(); }
 async function saveCloud(){
   if(!currentUser || !cloudReady) return;
   const revision=++cloudRevision;
@@ -83,7 +83,7 @@ async function saveCloud(){
       data: structuredClone(data),
       updatedAt: Date.now()
     },{merge:true});
-    if(revision===cloudRevision) toast("Saved to Google account.");
+    if(revision===cloudRevision) toast("Saved securely to your Google account.");
   }catch(e){
     console.error("Firestore save failed:",e);
     toast(`Sync failed: ${friendlyFirestoreError(e)}`);
@@ -133,6 +133,7 @@ async function loadCloud(user){
       localStorage.setItem(KEY,JSON.stringify(data));
     }
     cloudReady=true;
+    toast("Cloud sync is active.");
     cloudUnsubscribe=onSnapshot(ref,s=>{
       if(!s.exists()) return;
       const remote=s.data()?.data;
@@ -166,13 +167,16 @@ function syncAutoGoalDeposits(){
 function totalBalance(){ return data.accounts.filter(a=>a.includeInTotal!==false).reduce((s,a)=>s+Number(a.balance||0),0); }
 function excludedBalance(){ return data.accounts.filter(a=>a.includeInTotal===false).reduce((s,a)=>s+Number(a.balance||0),0); }
 function monthTx(){ const m=today().slice(0,7); return data.transactions.filter(t=>t.date.startsWith(m)); }
-function weekTx(){
+function weekRange(offset=0){
   const d=new Date();
   const day=(d.getDay()+6)%7;
-  const start=new Date(d.getFullYear(),d.getMonth(),d.getDate()-day,12,0,0);
+  const start=new Date(d.getFullYear(),d.getMonth(),d.getDate()-day+(offset*7),12,0,0);
   const end=new Date(start); end.setDate(start.getDate()+6);
-  const from=dateKey(start),to=dateKey(end);
-  return data.transactions.filter(t=>t.date>=from&&t.date<=to);
+  return {start,end,from:dateKey(start),to:dateKey(end)};
+}
+function weekTx(offset=0){
+  const r=weekRange(offset);
+  return data.transactions.filter(t=>t.date>=r.from&&t.date<=r.to);
 }
 function sum(list,type){ return list.filter(t=>t.type===type).reduce((s,t)=>s+Number(t.amount),0); }
 function greeting(){ const h=new Date().getHours(); if(h<5) return "Good night"; if(h<12) return "Good morning"; if(h<17) return "Good afternoon"; if(h<21) return "Good evening"; return "Good night"; }
@@ -248,14 +252,14 @@ function metric(title,value,note){
 }
 
 function dashboard(){
-  const mt=monthTx(), wt=weekTx(), income=sum(mt,"income"), expense=sum(mt,"expense"), savings=income-expense;
+  const mt=monthTx(), currentWt=weekTx(0), wt=weekTx(dashboardWeekOffset), income=sum(mt,"income"), expense=sum(mt,"expense"), savings=income-expense;
   const weekly=sum(wt,"expense");
   const recent=[...data.transactions].sort((a,b)=>`${b.date} ${b.time||""}`.localeCompare(`${a.date} ${a.time||""}`)).slice(0,3);
   const aiPreview="AI considers your cash-flow, spending history, goals, EMIs and upcoming commitments. Your long-term accumulated balance is context only and is never treated as weekly spending money.";
   const goalTotal=data.goals.reduce((s,g)=>s+Math.max(0,Number(g.target||0)-Number(g.saved||0)),0);
   const goalWeekly=weeklyGoalRequired();
   const goalReserve=goalReservedBalance();
-  const weeklyIncome=sum(wt,"income");
+  const weeklyIncome=sum(currentWt,"income");
   const commitment7=upcomingCommitments7();
   const safeRaw=weeklyIncome-weekly-commitment7-goalWeekly-goalReserve;
   const safePreview=Math.max(0,safeRaw);
@@ -268,7 +272,8 @@ function dashboard(){
   const safeExplanation=safePreview>0
     ? `After this week's income, spending, commitments, goal funding and money already reserved in goal-linked accounts, ${money(safePreview)} is currently available for flexible spending.`
     : `No flexible spending money is available right now. ${safeReasons.length?safeReasons.join(" · ")+".":"Add income, spending and commitment data for a more accurate decision."}`;
-  const d=new Date(); const monday=(d.getDay()+6)%7;
+  const range=weekRange(dashboardWeekOffset);
+  const d=range.start; const monday=0;
   const labels=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
   const points=[0,1,2,3,4,5,6].map(i=>{
     const x=new Date(d.getFullYear(),d.getMonth(),d.getDate()-monday+i);
@@ -309,7 +314,7 @@ function dashboard(){
     </div>
     <div class="card weekly-card">
       <div class="section-row"><h2>📊 Weekly Spending</h2><span class="badge">AI input ›</span></div>
-      <div class="weekly-head"><div><small>Total spent this week</small><strong>${money(weekly)}</strong></div><select aria-label="Weekly spending range"><option>This Week</option><option>Last Week</option></select></div>
+      <div class="weekly-head"><div><small>${dashboardWeekOffset===0?'Total spent this week':'Total spent last week'}</small><strong>${money(weekly)}</strong></div><select data-weekly-range aria-label="Weekly spending range"><option value="0" ${dashboardWeekOffset===0?'selected':''}>This Week</option><option value="-1" ${dashboardWeekOffset===-1?'selected':''}>Last Week</option></select></div>
       <div class="line-chart-wrap">
         <svg viewBox="0 0 ${svgW} ${svgH+10}" preserveAspectRatio="none" class="line-chart">
           ${grids}<polyline points="${chartPoints}" class="chart-line"/>${dots}
@@ -725,6 +730,7 @@ function settings(){return `<div class="grid2"><div class="card"><h2>Categories<
 
 function bindPageActions(){
   document.querySelectorAll("[data-page-go]").forEach(b=>b.onclick=()=>{currentPage=b.dataset.pageGo;render()});
+  document.querySelectorAll("[data-weekly-range]").forEach(el=>el.onchange=()=>{dashboardWeekOffset=Number(el.value)||0;render()});
   document.querySelectorAll("[data-action]").forEach(b=>b.onclick=()=>actions(b.dataset.action));
   document.querySelectorAll("[data-delete-tx]").forEach(b=>b.onclick=()=>deleteTx(b.dataset.deleteTx));
   document.querySelectorAll("[data-delete-account]").forEach(b=>b.onclick=()=>deleteAccount(b.dataset.deleteAccount));
