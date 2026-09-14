@@ -166,7 +166,13 @@ function syncAutoGoalDeposits(){
 
 function totalBalance(){ return data.accounts.filter(a=>a.includeInTotal!==false).reduce((s,a)=>s+Number(a.balance||0),0); }
 function excludedBalance(){ return data.accounts.filter(a=>a.includeInTotal===false).reduce((s,a)=>s+Number(a.balance||0),0); }
-function monthTx(){ const m=today().slice(0,7); return data.transactions.filter(t=>t.date.startsWith(m)); }
+function normalizedTxDate(t){
+  const raw=String(t?.date||t?.timestamp||"");
+  if(/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0,10);
+  const d=new Date(raw);
+  return Number.isNaN(d.getTime())?"":dateKey(d);
+}
+function monthTx(){ const m=today().slice(0,7); return data.transactions.filter(t=>normalizedTxDate(t).startsWith(m)); }
 function weekRange(offset=0){
   const d=new Date();
   const day=(d.getDay()+6)%7;
@@ -176,7 +182,7 @@ function weekRange(offset=0){
 }
 function weekTx(offset=0){
   const r=weekRange(offset);
-  return data.transactions.filter(t=>t.date>=r.from&&t.date<=r.to);
+  return data.transactions.filter(t=>{ const d=normalizedTxDate(t); return d && d>=r.from && d<=r.to; });
 }
 function sum(list,type){ return list.filter(t=>t.type===type).reduce((s,t)=>s+Number(t.amount),0); }
 function greeting(){ const h=new Date().getHours(); if(h<5) return "Good night"; if(h<12) return "Good morning"; if(h<17) return "Good afternoon"; if(h<21) return "Good evening"; return "Good night"; }
