@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <base href="./">
-<meta name="theme-color" content="#07110c">
-<title>My Money</title>
+<meta name="theme-color" content="#f4f8fc">
+<title>MoneyPilot</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -15,7 +15,7 @@
 <body>
 <div class="app-shell">
 <aside class="sidebar">
-  <div class="brand"><div class="brand-mark">₹</div><div><strong>My Money</strong><small>Manage. Save. Grow.</small></div></div>
+  <div class="brand"><div class="brand-mark">▲</div><div><strong>MoneyPilot</strong><small>Your money, clearer.</small></div></div>
   <nav id="sideNav">
     <button class="nav-item active" data-page="dashboard">⌂<span>Dashboard</span></button>
     <button class="nav-item" data-page="accounts"><i data-lucide="landmark"></i><span>Accounts</span></button>
@@ -29,15 +29,15 @@
   <div class="sidebar-card"><small>Total Balance</small><strong id="sideBalance">₹0</strong><p id="sideMessage">Add an account to get started.</p></div>
   <div class="sidebar-profile">
     <div class="profile-avatar"><img id="sideAvatarImg" alt="" hidden><span id="sideAvatarText">G</span></div>
-    <div class="profile-copy"><strong id="sideUserName">Guest</strong><small id="sideUserEmail">Not signed in</small></div>
+    <div class="profile-copy"><strong id="sideUserName">Guest</strong><small id="sideUserEmail">Stored in this browser</small></div>
   </div>
-  <button id="sideGoogleBtn" class="profile-btn">Continue with Google</button>
+  <button id="sideLocalBtn" class="profile-btn" disabled>Local data only</button>
 </aside>
 
 <main class="main">
 <header class="topbar">
   <div>
-    <div class="mobile-brand">My Money</div>
+    <div class="mobile-brand">MoneyPilot</div>
     <h1 id="pageTitle">Good evening 👋</h1>
     <p id="pageSubtitle">Here's what's happening with your money today.</p>
   </div>
@@ -45,7 +45,7 @@
     <label class="search">⌕<input id="searchInput" placeholder="Search transactions..."></label>
     <div class="top-date"><span id="todayLabel">Today</span><span class="calendar-dot">▣</span></div>
     <button class="icon-btn top-bell" aria-label="Notifications">♧</button>
-    <button id="topGoogleBtn" class="user-pill"><span class="avatar"><img id="avatarImg" alt="" hidden><span id="avatar">G</span></span><span id="userName">Guest</span></button>
+    <button id="topLocalBtn" class="user-pill"><span class="avatar"><img id="avatarImg" alt="" hidden><span id="avatar">L</span></span><span id="userName">Local</span></button>
   </div>
 </header>
 <section id="content" class="content"></section>
@@ -62,7 +62,7 @@
 
 <div id="modal" class="modal hidden">
   <div class="modal-card">
-    <div class="modal-head"><h2 id="modalTitle">Add</h2><button id="closeModal">×</button></div>
+    <div class="modal-head"><h2 id="modalTitle">Add</h2><button id="closeModal" type="button">×</button></div>
     <div id="modalBody"></div>
   </div>
 </div>

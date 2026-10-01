@@ -1,15 +1,74 @@
-import { db, login, logout, watchAuth } from "./auth.js";
-import { doc, getDoc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
 
 const KEY = "my-money-data-v2";
+const DATA_PRESET_VERSION = 3;
 let dashboardWeekOffset = 0;
+const UNIVERSAL_CATEGORIES = [
+  "Food & Dining",
+  "Groceries",
+  "Tea & Snacks",
+  "Transport",
+  "Fuel",
+  "Vehicle",
+  "Bills & Utilities",
+  "Mobile & Internet",
+  "Rent & Home",
+  "Maintenance",
+  "Shopping",
+  "Clothing",
+  "Personal Care",
+  "Health",
+  "Pharmacy",
+  "Fitness",
+  "Education",
+  "Books & Courses",
+  "Entertainment",
+  "Subscriptions",
+  "Travel",
+  "Family",
+  "Kids",
+  "Pets",
+  "Gifts & Donations",
+  "Taxes & Fees",
+  "Insurance",
+  "EMI & Loans",
+  "Credit Card Payment",
+  "Savings & Goals",
+  "Income",
+  "Freelance",
+  "Business",
+  "Refunds",
+  "Investments",
+  "Transfer",
+  "Other"
+];
+const LEGACY_DEFAULT_CATEGORIES = ["Food & Dining","Transport","Shopping","Bills & Utilities","Entertainment","Health","Salary","Other"];
+const UNIVERSAL_ACCOUNT_TYPES = [
+  "Bank",
+  "Savings Account",
+  "Current Account",
+  "Cash",
+  "Wallet / UPI",
+  "Credit Card",
+  "Debit Card",
+  "Fixed Deposit",
+  "Recurring Deposit",
+  "Investment",
+  "Mutual Fund",
+  "Stocks / Demat",
+  "Loan Account",
+  "EMI Account",
+  "Crypto",
+  "Other"
+];
+const LEGACY_DEFAULT_ACCOUNT_TYPES = ["Bank","Cash","Wallet","Credit Card","Investment","Other"];
 const defaultData = {
+  presetVersion: DATA_PRESET_VERSION,
   accounts: [
     {id:"a1", name:"SBI Savings", type:"Bank", balance:0},
     {id:"a2", name:"Cash Wallet", type:"Cash", balance:0}
   ],
-  categories: ["Food & Dining","Transport","Shopping","Bills & Utilities","Entertainment","Health","Salary","Other"],
-  accountTypes: ["Bank","Cash","Wallet","Credit Card","Investment","Other"],
+  categories: UNIVERSAL_CATEGORIES,
+  accountTypes: UNIVERSAL_ACCOUNT_TYPES,
   transactions: [],
   goals: [],
   budgets: [],
@@ -43,10 +102,6 @@ let currentPage = "dashboard";
 let analyticsFrom = dateKey(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
 let analyticsTo = today();
 let analyticsPreset = "30 days";
-let currentUser = null;
-let cloudUnsubscribe = null;
-let syncing = false;
-let cloudReady = false;
 
 const $ = id => document.getElementById(id);
 const money = n => new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:2}).format(Number(n)||0);
@@ -60,98 +115,41 @@ function refreshIcons(){
     window.lucide.createIcons({attrs:{"stroke-width":1.8}});
   }
 }
+function applyTheme(){
+  document.documentElement.dataset.theme="gradient";
+  const meta=document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.setAttribute("content","#d9d8ff");
+}
 
 function load(){
-  try { return {...structuredClone(defaultData), ...JSON.parse(localStorage.getItem(KEY)||"{}")}; }
+  try {
+    const stored=JSON.parse(localStorage.getItem(KEY)||"{}");
+    const merged={...structuredClone(defaultData), ...stored};
+    const cat=normalizePresetList(stored.categories, UNIVERSAL_CATEGORIES, LEGACY_DEFAULT_CATEGORIES, stored.presetVersion);
+    const types=normalizePresetList(stored.accountTypes, UNIVERSAL_ACCOUNT_TYPES, LEGACY_DEFAULT_ACCOUNT_TYPES, stored.presetVersion);
+    merged.categories=cat.list;
+    merged.accountTypes=types.list;
+    if(cat.migrated || types.migrated || stored.presetVersion!==DATA_PRESET_VERSION){
+      merged.presetVersion=DATA_PRESET_VERSION;
+      localStorage.setItem(KEY, JSON.stringify(merged));
+    }
+    return merged;
+  }
   catch { return structuredClone(defaultData); }
+}
+function normalizePresetList(existing, universal, legacy, version){
+  const clean=[...new Set((Array.isArray(existing)?existing:[]).map(x=>String(x||"").trim()).filter(Boolean))];
+  if(!clean.length) return {list:[...universal], migrated:version!==DATA_PRESET_VERSION};
+  if(version===DATA_PRESET_VERSION) return {list:clean, migrated:false};
+  const legacySet=new Set(legacy.map(x=>x.toLowerCase()));
+  const universalSet=new Set(universal.map(x=>x.toLowerCase()));
+  const custom=clean.filter(x=>!legacySet.has(x.toLowerCase()) && !universalSet.has(x.toLowerCase()));
+  return {list:[...universal,...custom], migrated:true};
 }
 function save(){
   syncAutoGoalDeposits();
   localStorage.setItem(KEY, JSON.stringify(data));
-  // Every change is pushed to Firestore immediately; do not rely on a delayed
-  // browser-only save that can be lost when browsing data is cleared.
-  if(currentUser && cloudReady) saveCloud();
-  else if(!currentUser) toast("Saved locally. Sign in with Google to protect your data.");
-}
-let cloudRevision = 0;
-function queueCloudSave(){ saveCloud(); }
-async function saveCloud(){
-  if(!currentUser || !cloudReady) return;
-  const revision=++cloudRevision;
-  try{
-    await setDoc(doc(db,"users",currentUser.uid),{
-      data: structuredClone(data),
-      updatedAt: Date.now()
-    },{merge:true});
-    if(revision===cloudRevision) toast("Saved securely to your Google account.");
-  }catch(e){
-    console.error("Firestore save failed:",e);
-    toast(`Sync failed: ${friendlyFirestoreError(e)}`);
-  }
-}
-function friendlyFirestoreError(e){
-  const code=e?.code||"";
-  if(code.includes("permission-denied")) return "permission denied — publish firestore.rules";
-  if(code.includes("failed-precondition")) return "Firestore database is not ready";
-  if(code.includes("not-found")) return "Firestore database not found";
-  if(code.includes("unavailable")) return "Firebase is temporarily unavailable";
-  return e?.message ? String(e.message).slice(0,90) : "check Firebase setup";
-}
-function normalizeCloud(x){
-  const base=structuredClone(defaultData);
-  data={...base,...(x||{})};
-  data.accounts=Array.isArray(data.accounts)?data.accounts:base.accounts;
-  data.categories=Array.isArray(data.categories)?data.categories:base.categories;
-  data.accountTypes=Array.isArray(data.accountTypes)?data.accountTypes:base.accountTypes;
-  data.transactions=Array.isArray(data.transactions)?data.transactions:[];
-  data.goals=Array.isArray(data.goals)?data.goals:[];
-  data.goals.forEach(g=>{ if(!Object.prototype.hasOwnProperty.call(g,"accountId")) g.accountId=""; });
-  data.budgets=Array.isArray(data.budgets)?data.budgets:[];
-  data.emis=Array.isArray(data.emis)?data.emis:[];
-  data.emis.forEach(e=>{
-    if(!e.startDate){
-      const first=(data.transactions||[]).filter(t=>t.emiId===e.id).sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")))[0];
-      if(first?.date) e.startDate=first.date;
-    }
-  });
-  data.loans=Array.isArray(data.loans)?data.loans:[];
-  data.accounts.forEach(a=>{ if(!Object.prototype.hasOwnProperty.call(a,"includeInTotal")) a.includeInTotal=!/credit\s*card|card/i.test(String(a.type||"")+" "+String(a.name||"")); });
-  syncAutoGoalDeposits();
-}
-async function loadCloud(user){
-  if(cloudUnsubscribe){cloudUnsubscribe();cloudUnsubscribe=null;}
-  cloudReady=false;
-  const ref=doc(db,"users",user.uid);
-  try{
-    const snap=await getDoc(ref);
-    if(snap.exists() && snap.data()?.data){
-      normalizeCloud(snap.data().data);
-      localStorage.setItem(KEY,JSON.stringify(data));
-      render();
-    }else{
-      await setDoc(ref,{data:structuredClone(data),updatedAt:Date.now()},{merge:true});
-      localStorage.setItem(KEY,JSON.stringify(data));
-    }
-    cloudReady=true;
-    toast("Cloud sync is active.");
-    cloudUnsubscribe=onSnapshot(ref,s=>{
-      if(!s.exists()) return;
-      const remote=s.data()?.data;
-      if(!remote) return;
-      normalizeCloud(remote);
-      localStorage.setItem(KEY,JSON.stringify(data));
-      render();
-    },e=>{
-      console.error("Firestore listener failed:",e);
-      toast(`Sync listener: ${friendlyFirestoreError(e)}`);
-    });
-    toast("Google data loaded.");
-  }catch(e){
-    console.error("Firestore load failed:",e);
-    cloudReady=false;
-    render();
-    toast(`Could not load data: ${friendlyFirestoreError(e)}`);
-  }
+  toast("Saved locally.");
 }
 function uid(p="id"){ return p+"_"+Date.now()+"_"+Math.random().toString(36).slice(2,7); }
 function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2200); }
@@ -217,18 +215,150 @@ function upcomingCommitments7(){ const end=new Date(); end.setDate(end.getDate()
 
 
 function accountIcon(a){
-  const n=String(a?.name||'').toLowerCase(), t=String(a?.type||'').toLowerCase();
-  if(a?.logo) return `<img class="account-logo-img" src="${esc(a.logo)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">` + `<span class="account-auto-icon" style="display:none">${accountEmoji(a)}</span>`;
-  return `<span class="account-auto-icon">${accountEmoji(a)}</span>`;
+  if(a?.logo) return `<img class="account-logo-img" src="${esc(a.logo)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">` + `<span class="account-auto-icon account-emoji-icon" style="display:none">${accountGlyph(a)}</span>`;
+  return `<span class="account-auto-icon account-emoji-icon">${accountGlyph(a)}</span>`;
 }
-function accountEmoji(a){
+function accountIconName(a){
   const n=String(a?.name||'').toLowerCase(),t=String(a?.type||'').toLowerCase();
-  if(/sbi|state bank/.test(n))return '🏦'; if(/hdfc/.test(n))return '🏛️'; if(/icici/.test(n))return '🏦';
-  if(/axis/.test(n))return '🏦'; if(/kotak/.test(n))return '🏦'; if(/cash|wallet/.test(t+' '+n))return '👛';
-  if(/credit|card/.test(t+' '+n))return '💳'; if(/upi/.test(t+' '+n))return '📱'; if(/fd|fixed/.test(t+' '+n))return '🔒';
-  if(/investment|mutual|stock|demat/.test(t+' '+n))return '📈'; return '🏦';
+  if(/cash/.test(t+' '+n))return 'banknote';
+  if(/credit|card/.test(t+' '+n))return 'credit-card';
+  if(/upi|wallet|paytm|phonepe|gpay|google pay/.test(t+' '+n))return 'smartphone';
+  if(/fd|fixed|deposit|lock/.test(t+' '+n))return 'lock';
+  if(/investment|mutual|stock|demat|equity|fund/.test(t+' '+n))return 'trending-up';
+  if(/loan|emi|borrow/.test(t+' '+n))return 'hand-coins';
+  return 'landmark';
+}
+function accountGlyph(a){
+  const n=String(a?.name||'').toLowerCase(),t=String(a?.type||'').toLowerCase();
+  if(/sbi|state bank|hdfc|icici|axis|kotak|yes bank|idfc|bob|baroda|canara|pnb/.test(t+' '+n))return '🏦';
+  if(/cash/.test(t+' '+n))return '💵';
+  if(/credit|card/.test(t+' '+n))return '💳';
+  if(/upi|wallet|paytm|phonepe|gpay|google pay/.test(t+' '+n))return '📱';
+  if(/fd|fixed|deposit/.test(t+' '+n))return '🔒';
+  if(/investment|mutual|stock|demat|equity|fund/.test(t+' '+n))return '📈';
+  return '🏦';
+}
+function accountLabel(a){ return `${accountGlyph(a)} ${esc(a?.name||"Account")} · ${money(a?.balance||0)}`; }
+function accountNetwork(a){
+  const s=String(`${a?.type||""} ${a?.name||""}`).toLowerCase();
+  if(/credit|debit|card/.test(s)) return "CARD";
+  if(/cash/.test(s)) return "CASH";
+  if(/upi|wallet|paytm|phonepe|gpay|google pay/.test(s)) return "UPI";
+  if(/investment|mutual|stock|demat|fund/.test(s)) return "INVEST";
+  return "BANK";
+}
+function accountMaskedNumber(a){
+  const seed=String(a?.id||a?.name||"0000").split("").reduce((sum,ch)=>sum+ch.charCodeAt(0),0);
+  const last=String((seed*37)%10000).padStart(4,"0");
+  return `••••  ••••  ${last}`;
+}
+function accountCard(a,mode="dashboard"){
+  const goalCount=data.goals.filter(g=>g.accountId===a.id).length;
+  const included=a.includeInTotal!==false;
+  return `<div class="card wallet-account-card ${mode==="dashboard"?"dashboard-account-card":""}">
+    <div class="wallet-card-orbit"></div>
+    <div class="wallet-card-top">
+      <div class="account-brand">${accountVisual(a)}<div><strong>${esc(a.name)}</strong><small>${accountTypeLabel(a.type)}</small></div></div>
+      <div class="wallet-network"><i></i><i></i></div>
+    </div>
+    <div class="wallet-balance"><small>Balance</small><strong>${money(a.balance)}</strong></div>
+    <div class="wallet-number"><span>${accountMaskedNumber(a)}</span><em>${accountNetwork(a)}</em></div>
+    <div class="wallet-card-footer">
+      <span class="account-pill">${included?"Included":"Excluded"}</span>
+      <span>${goalCount} goal${goalCount===1?"":"s"}</span>
+      <div class="wallet-actions">
+        ${mode==="full"?`<button class="secondary ghost" data-edit-account="${a.id}" aria-label="Edit ${esc(a.name)}">Edit</button><button class="danger ghost" data-delete-account="${a.id}" aria-label="Delete ${esc(a.name)}">Delete</button>`:`<button class="icon-menu" data-edit-account="${a.id}" aria-label="Edit ${esc(a.name)}">⋮</button>`}
+      </div>
+    </div>
+    ${mode==="full"?`<label class="include-total-toggle wallet-include"><input type="checkbox" data-toggle-account-total="${a.id}" ${included?'checked':''}><span>Include in Total Money</span></label>`:""}
+  </div>`;
+}
+function accountLabelByName(name){
+  const account=(data.accounts||[]).find(a=>a.name===name);
+  return account?`${accountGlyph(account)} ${esc(account.name)}`:esc(name||"Account");
+}
+function accountTypeEmoji(type){
+  const t=String(type||"").toLowerCase();
+  if(/savings/.test(t))return "💰";
+  if(/current|business/.test(t))return "🏢";
+  if(/cash/.test(t))return "💵";
+  if(/wallet|upi|paytm|phonepe|gpay|google pay/.test(t))return "📱";
+  if(/credit/.test(t))return "💳";
+  if(/debit/.test(t))return "💳";
+  if(/fixed|fd/.test(t))return "🔒";
+  if(/recurring|rd/.test(t))return "📅";
+  if(/mutual/.test(t))return "📊";
+  if(/stock|demat|equity/.test(t))return "📈";
+  if(/investment|fund/.test(t))return "📈";
+  if(/loan/.test(t))return "🧾";
+  if(/emi/.test(t))return "💳";
+  if(/crypto|coin/.test(t))return "🪙";
+  if(/bank/.test(t))return "🏦";
+  if(/other/.test(t))return "✨";
+  return "🏦";
+}
+function accountTypeLabel(type){ return `${accountTypeEmoji(type)} ${esc(type||"Other")}`; }
+function accountTypeOption(type, selected=false){
+  return `<option value="${esc(type)}" ${selected?"selected":""}>${accountTypeLabel(type)}</option>`;
+}
+function categoryEmoji(category){
+  const c=String(category||"").toLowerCase();
+  if(/tea|snack|coffee|cafe/.test(c))return "☕";
+  if(/food|dining|restaurant|meal/.test(c))return "🍽️";
+  if(/grocery|groceries|supermarket/.test(c))return "🛒";
+  if(/travel|trip|flight|hotel/.test(c))return "✈️";
+  if(/fuel|petrol|diesel/.test(c))return "⛽";
+  if(/\b(vehicle|car|bike|service|parking)\b/.test(c))return "🚘";
+  if(/\b(transport|cab|taxi|uber|ola|bus|train|metro)\b/.test(c))return "🚗";
+  if(/clothing|clothes|fashion/.test(c))return "👕";
+  if(/shopping|amazon|flipkart/.test(c))return "🛍️";
+  if(/mobile|internet|recharge|phone/.test(c))return "📶";
+  if(/bill|utilities|electric|water|gas/.test(c))return "💡";
+  if(/maintenance|repair|renovation/.test(c))return "🛠️";
+  if(/subscription|ott|netflix|prime/.test(c))return "🔄";
+  if(/entertainment|movie|music|game/.test(c))return "🎬";
+  if(/pharmacy|medicine/.test(c))return "💊";
+  if(/fitness|gym|workout/.test(c))return "🏋️";
+  if(/health|medical|doctor|hospital/.test(c))return "🩺";
+  if(/personal|salon|beauty|care/.test(c))return "🧴";
+  if(/book|course/.test(c))return "📚";
+  if(/education|school|college/.test(c))return "🎓";
+  if(/family/.test(c))return "👨‍👩‍👧";
+  if(/kids|child|children/.test(c))return "🧸";
+  if(/pet/.test(c))return "🐾";
+  if(/tax|fee|fees|charge/.test(c))return "🧾";
+  if(/insurance/.test(c))return "🛡️";
+  if(/refund/.test(c))return "↩️";
+  if(/freelance/.test(c))return "🧑‍💻";
+  if(/business/.test(c))return "🏢";
+  if(/salary|income|payroll|bonus/.test(c))return "💼";
+  if(/investment|investments|mutual|stock|demat|equity|fund/.test(c))return "📈";
+  if(/goal|saving|savings/.test(c))return "🎯";
+  if(/emi|loan|debt|repayment|credit/.test(c))return "💳";
+  if(/rent|home|house/.test(c))return "🏠";
+  if(/gift|donation/.test(c))return "🎁";
+  if(/transfer/.test(c))return "🔁";
+  if(/other|misc/.test(c))return "✨";
+  return "🏷️";
+}
+function categoryLabel(category){ return `${categoryEmoji(category)} ${esc(category||"Other")}`; }
+function categoryOption(category, selected=false){
+  return `<option value="${esc(category)}" ${selected?"selected":""}>${categoryLabel(category)}</option>`;
 }
 function accountVisual(a){ return `<span class="account-visual">${accountIcon(a)}</span>`; }
+function customPicker(name,items,selected="",placeholder="Select"){
+  const safeItems=items.length?items:[{value:"",label:placeholder}];
+  const current=safeItems.find(x=>String(x.value)===String(selected))||safeItems[0];
+  return `<div class="custom-picker" data-picker>
+    <input type="hidden" name="${esc(name)}" value="${esc(current.value)}">
+    <button type="button" class="picker-button" data-picker-button><span>${current.label}</span>${icon("chevron-down",17)}</button>
+    <div class="picker-menu" data-picker-menu>
+      ${safeItems.map(x=>`<button type="button" class="picker-option ${String(x.value)===String(current.value)?"active":""}" data-picker-option value="${esc(x.value)}" ${x.amount!=null?`data-amount="${esc(x.amount)}"`:""} ${x.remaining!=null?`data-remaining="${esc(x.remaining)}"`:""}><span>${x.label}</span></button>`).join("")}
+    </div>
+  </div>`;
+}
+const categoryPickerItems = cats => cats.map(c=>({value:c,label:categoryLabel(c)}));
+const accountPickerItems = () => data.accounts.map(a=>({value:a.id,label:accountLabel(a)}));
 
 function syncEmiDatesFromPayments(){
   (data.emis||[]).forEach(e=>{
@@ -239,7 +369,7 @@ function syncEmiDatesFromPayments(){
 function render(){
   syncEmiDatesFromPayments();
   const titles={dashboard:`${greeting()} 👋`,accounts:"Accounts",transactions:"Transactions",analytics:"Analytics",goals:"Goals",budgets:"Budgets",emis:"EMIs & Loans",settings:"Settings"};
-  $("pageTitle").textContent=titles[currentPage]||"My Money";
+  $("pageTitle").textContent=titles[currentPage]||"MoneyPilot";
   $("pageSubtitle").textContent=currentPage==="dashboard"?"Here's what's happening with your money today.":"Manage your finances with clarity.";
   document.querySelectorAll("[data-page]").forEach(b=>b.classList.toggle("active",b.dataset.page===currentPage));
   $("sideBalance").textContent=money(totalBalance());
@@ -250,34 +380,97 @@ function render(){
   if(window.lucide?.createIcons) window.lucide.createIcons({attrs:{"stroke-width":1.8}});
 }
 
-function metric(title,value,note){
+function smoothPath(values,w=150,h=54,pad=8){
+  const clean=values.map(v=>Number(v)||0);
+  const fallback=[22,30,24,38,33,45,42];
+  const series=clean.some(v=>v>0||v<0)?clean:fallback;
+  const min=Math.min(...series), max=Math.max(...series);
+  const span=Math.max(1,max-min);
+  const pts=series.map((v,i)=>({
+    x:pad+i*((w-pad*2)/(series.length-1||1)),
+    y:h-pad-((v-min)/span)*(h-pad*2)
+  }));
+  if(!pts.length) return "";
+  if(pts.length===1) return `M ${pts[0].x} ${pts[0].y}`;
+  let d=`M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)}`;
+  for(let i=1;i<pts.length;i++){
+    const prev=pts[i-1],cur=pts[i],midX=(prev.x+cur.x)/2;
+    d+=` C ${midX.toFixed(2)} ${prev.y.toFixed(2)}, ${midX.toFixed(2)} ${cur.y.toFixed(2)}, ${cur.x.toFixed(2)} ${cur.y.toFixed(2)}`;
+  }
+  return d;
+}
+function miniSparkline(values,tone="green"){
+  return `<svg class="mini-sparkline ${tone}" viewBox="0 0 150 54" aria-hidden="true">
+    <path class="mini-sparkline-fill" d="${smoothPath(values,150,54,8)} L 142 48 L 8 48 Z"></path>
+    <path class="mini-sparkline-line" d="${smoothPath(values,150,54,8)}"></path>
+  </svg>`;
+}
+function moneyFlowSvg(savingValues,expenseValues,labels,tooltipValue){
+  const w=660,h=230,padL=48,padR=20,padT=26,padB=46;
+  const visualA=savingValues.some(v=>v>0||v<0)?savingValues:[1800,1950,2200,1150,1750,1600,2350];
+  const visualB=expenseValues.some(v=>v>0||v<0)?expenseValues:[1450,1580,1700,1400,1850,2050,1900];
+  const all=[...visualA,...visualB,3000];
+  const max=Math.max(1,...all), min=Math.min(0,...all);
+  const scale=(v)=>padT+(max-v)/(max-min || 1)*(h-padT-padB);
+  const xFor=i=>padL+i*((w-padL-padR)/(visualA.length-1||1));
+  const pathFor=arr=>{
+    const pts=arr.map((v,i)=>({x:xFor(i),y:scale(v)}));
+    if(!pts.length) return "";
+    let d=`M ${pts[0].x.toFixed(2)} ${pts[0].y.toFixed(2)}`;
+    for(let i=1;i<pts.length;i++){
+      const prev=pts[i-1],cur=pts[i],midX=(prev.x+cur.x)/2;
+      d+=` C ${midX.toFixed(2)} ${prev.y.toFixed(2)}, ${midX.toFixed(2)} ${cur.y.toFixed(2)}, ${cur.x.toFixed(2)} ${cur.y.toFixed(2)}`;
+    }
+    return d;
+  };
+  const tooltipIndex=Math.max(0,visualA.indexOf(Math.max(...visualA)));
+  const tx=xFor(tooltipIndex), ty=scale(visualA[tooltipIndex]);
+  const axis=[3000,2000,1000,0].map(v=>`<text x="4" y="${scale(v)+4}" class="flow-axis">${money(v).replace(".00","")}</text><line x1="${padL}" x2="${w-padR}" y1="${scale(v)}" y2="${scale(v)}" class="flow-grid"/>`).join("");
+  const labelEls=visualA.map((_,i)=>`<text x="${xFor(i)}" y="${h-16}" text-anchor="middle" class="flow-label">${esc(labels[i]||"")}</text>`).join("");
+  return `<svg class="money-flow-svg" viewBox="0 0 ${w} ${h}" aria-label="Money flow chart" role="img">
+    ${axis}
+    <path class="flow-line expense-line" d="${pathFor(visualB)}"></path>
+    <path class="flow-line saving-line" d="${pathFor(visualA)}"></path>
+    <line x1="${tx}" x2="${tx}" y1="${padT}" y2="${h-padB}" class="flow-cursor"></line>
+    <circle cx="${tx}" cy="${ty}" r="5" class="flow-point"></circle>
+    <g class="flow-tooltip" transform="translate(${Math.min(w-118,Math.max(58,tx-34))} ${Math.max(16,ty-56)})">
+      <rect width="78" height="38" rx="18"></rect>
+      <text x="39" y="16" text-anchor="middle">${money(tooltipValue || visualA[tooltipIndex]).replace(".00","")}</text>
+      <text x="39" y="29" text-anchor="middle">Top flow</text>
+    </g>
+    ${labelEls}
+  </svg>`;
+}
+
+function moneyParts(value){
+  const formatted=money(value);
+  const match=formatted.match(/^(.+?)(\.\d{2})$/);
+  if(!match)return `<span class="amount-main">${esc(formatted)}</span>`;
+  return `<span class="amount-main">${esc(match[1])}</span><span class="amount-decimal">${esc(match[2])}</span>`;
+}
+
+function metric(title,value,note,values=[],opts={}){
   const icons={"Total Balance":"wallet","This Month Income":"trending-up","This Month Expenses":"trending-down","Net Savings":"piggy-bank"};
   const tone={"Total Balance":"green","This Month Income":"lime","This Month Expenses":"red","Net Savings":"blue"};
   const negative=Number(value)<0;
-  return `<div class="card metric ${negative?"negative-state":""}"><div class="metric-icon-wrap"><span class="metric-icon ${negative?"red":(tone[title]||"green")}"><i data-lucide="${icons[title]||"wallet"}"></i></span><small>${title}</small></div><strong>${money(value)}</strong><span class="muted">${note}</span></div>`
+  const cardTone=negative?"red":(tone[title]||"green");
+  const valueText=opts.format==="count"?String(Number(value||0)):money(value);
+  return `<div class="card metric record-card record-${cardTone} ${negative?"negative-state":""}">
+    <div class="metric-icon-wrap"><span class="metric-icon ${cardTone}"><i data-lucide="${icons[title]||"wallet"}"></i></span><small>${title}</small><button class="record-menu" type="button" aria-label="${esc(title)} options">⋮</button></div>
+    <div class="record-body"><div><strong>${esc(valueText)}</strong><span class="muted">${note}</span></div>${miniSparkline(values,cardTone)}</div>
+  </div>`
 }
 
 function dashboard(){
   const mt=monthTx(), currentWt=weekTx(0), wt=weekTx(dashboardWeekOffset), income=sum(mt,"income"), expense=sum(mt,"expense"), savings=income-expense;
   const weekly=sum(wt,"expense");
   const recent=[...data.transactions].sort((a,b)=>`${b.date} ${b.time||""}`.localeCompare(`${a.date} ${a.time||""}`)).slice(0,3);
-  const aiPreview="AI considers your cash-flow, spending history, goals, EMIs and upcoming commitments. Your long-term accumulated balance is context only and is never treated as weekly spending money.";
-  const goalTotal=data.goals.reduce((s,g)=>s+Math.max(0,Number(g.target||0)-Number(g.saved||0)),0);
-  const goalWeekly=weeklyGoalRequired();
-  const goalReserve=goalReservedBalance();
-  const weeklyIncome=sum(currentWt,"income");
-  const commitment7=upcomingCommitments7();
-  const safeRaw=weeklyIncome-weekly-commitment7-goalWeekly-goalReserve;
-  const safePreview=Math.max(0,safeRaw);
-  const safeReasons=[];
-  if(weeklyIncome<=0) safeReasons.push("No income recorded for this week");
-  if(weekly>0) safeReasons.push(`${money(weekly)} already spent this week`);
-  if(commitment7>0) safeReasons.push(`${money(commitment7)} upcoming EMI/loan commitments`);
-  if(goalWeekly>0) safeReasons.push(`${money(goalWeekly)} needed for goal funding`);
-  if(goalReserve>0) safeReasons.push(`${money(goalReserve)} reserved in goal-linked account${goalReserve===1?'':'s'}`);
-  const safeExplanation=safePreview>0
-    ? `After this week's income, spending, commitments, goal funding and money already reserved in goal-linked accounts, ${money(safePreview)} is currently available for flexible spending.`
-    : `No flexible spending money is available right now. ${safeReasons.length?safeReasons.join(" · ")+".":"Add income, spending and commitment data for a more accurate decision."}`;
+  const plan=overallGoalPlan();
+  const upcoming=upcomingCommitments7();
+  const nextEmi=upcomingEmis()[0];
+  const budgetUsed=data.budgets.reduce((total,b)=>total+(monthTx().filter(t=>t.category===b.category&&t.type==="expense").reduce((s,t)=>s+Number(t.amount),0)),0);
+  const budgetLimit=data.budgets.reduce((total,b)=>total+Number(b.limit||0),0);
+  const budgetPct=Math.min(100,budgetLimit?budgetUsed/budgetLimit*100:0);
   const range=weekRange(dashboardWeekOffset);
   const d=range.start; const monday=0;
   const labels=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
@@ -298,58 +491,101 @@ function dashboard(){
       <text x="${x}" y="${svgH-3}" text-anchor="middle" class="chart-date">${p.date.getDate()} ${p.date.toLocaleString("en-IN",{month:"short"})}</text>`;
   }).join("");
   const grids=[0,.33,.66,1].map(v=>{const y=padTop+v*(svgH-padTop-padBottom);return `<line x1="${padX}" x2="${svgW-padX}" y1="${y}" y2="${y}" class="chart-grid"/>`}).join("");
+  const topCats=Object.entries(mt.filter(t=>t.type==="expense").reduce((acc,t)=>{const key=t.category||"Other";acc[key]=(acc[key]||0)+Number(t.amount||0);return acc;},{})).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const spentTotal=topCats.reduce((s,[,v])=>s+v,0);
+  const trendBars=[5,4,3,2,1,0].map(i=>{
+    const m=new Date(new Date().getFullYear(),new Date().getMonth()-i,1);
+    const key=`${m.getFullYear()}-${String(m.getMonth()+1).padStart(2,"0")}`;
+    const amount=data.transactions.filter(t=>t.type==="expense"&&String(t.date||"").startsWith(key)).reduce((s,t)=>s+Number(t.amount||0),0);
+    const monthIncome=data.transactions.filter(t=>t.type==="income"&&String(t.date||"").startsWith(key)).reduce((s,t)=>s+Number(t.amount||0),0);
+    return {label:m.toLocaleDateString("en-IN",{month:"short"}),amount,income:monthIncome,saving:monthIncome-amount};
+  });
+  const trendMax=Math.max(1,...trendBars.map(x=>x.amount));
+  const moneyFlowLabels=points.map(p=>`${p.date.getDate()} ${p.label}`);
+  const dailyExpense=points.map(p=>p.value);
+  const dailyIncome=points.map(p=>{
+    const ds=dateKey(p.date);
+    return sum(wt.filter(t=>t.date===ds),"income");
+  });
+  const dailySaving=dailyIncome.map((v,i)=>Math.max(0,v-dailyExpense[i]));
+  const flowTooltip=Math.max(...dailySaving,0) || Math.max(...dailyExpense,0) || weekly;
 
-  return `<div class="dashboard-head-space"></div>
-  <div class="grid4 metrics-grid">
-    ${metric("Total Balance",totalBalance(),"All accounts")}
-    ${metric("This Month Income",income,"Money received")}
-    ${metric("This Month Expenses",expense,"Money spent")}
-    ${metric("Net Savings",savings,"Income − expenses")}
-  </div>
-  <div class="grid2 spaced dashboard-main-grid">
-    <div class="card smart-card ${safeRaw<=0?"negative-state":""}">
-      <div class="section-row"><h2>🧠 AI Smart Money Management</h2><span class="badge">AI Advisor</span></div>
-      <small>Personalized decision window</small>
-      <div class="smart-amount ${safeRaw<=0?'smart-zero':''}">${money(safePreview)}</div>
-      <b>${safeRaw<=0?'No money left to spend':'currently safe to spend'}</b>
-      <p>${aiPreview}</p>
-      <div class="smart-reason ${safeRaw<=0?'warning':''}"><strong>${safeRaw<=0?'⚠️ Why ₹0?':'✓ How this is calculated'}</strong><span>${esc(safeExplanation)}</span></div>
-      <div class="smart-formula"><span>Weekly income</span><b>${money(weeklyIncome)}</b><span>− Spending</span><b>${money(weekly)}</b><span>− Commitments</span><b>${money(commitment7)}</b><span>− Goal funding</span><b>${money(goalWeekly)}</b><span>− Goal account reserve</span><b>${money(goalReserve)}</b></div>
-      <div class="smart-stats"><div>This week<strong>${money(weekly)}</strong></div><div>Goals remaining<strong>${money(goalTotal)}</strong></div><div>Monthly savings<strong>${money(savings)}</strong></div></div>
-      <button class="primary smart-button" data-action="smart">Ask AI for My Money Decision →</button>
-    </div>
-    <div class="card weekly-card">
-      <div class="section-row"><h2>📊 Weekly Spending</h2><span class="badge">AI input ›</span></div>
-      <div class="weekly-head"><div><small>${dashboardWeekOffset===0?'Total spent this week':'Total spent last week'}</small><strong>${money(weekly)}</strong></div><select data-weekly-range aria-label="Weekly spending range"><option value="0" ${dashboardWeekOffset===0?'selected':''}>This Week</option><option value="-1" ${dashboardWeekOffset===-1?'selected':''}>Last Week</option></select></div>
-      <div class="line-chart-wrap">
-        <svg viewBox="0 0 ${svgW} ${svgH+10}" preserveAspectRatio="none" class="line-chart">
-          ${grids}<polyline points="${chartPoints}" class="chart-line"/>${dots}
-        </svg>
+  return `<div class="dashboard-hero">
+    <div class="hero-copy">
+      <span class="hero-kicker">MONEY OVERVIEW</span>
+      <h2>${money(totalBalance())}</h2>
+      <p>Total money across included accounts. Loans, EMIs, and excluded accounts stay separate.</p>
+      <div class="hero-actions"><button class="primary" data-action="add-transaction">+ Add Transaction</button><button class="secondary" data-page-go="analytics">View Analytics</button></div>
+      <div class="hero-strip">
+        <div><small>Month income</small><strong>${money(income)}</strong></div>
+        <div><small>Month expense</small><strong>${money(expense)}</strong></div>
+        <div><small>Goal remaining</small><strong>${money(plan.totalRemaining)}</strong></div>
       </div>
-      ${weekly===0?`<div class="weekly-empty compact"><div class="empty-icon">ⓘ</div><div><strong>No spending yet this week.</strong><p>Your weekly spending will appear here as you add transactions.</p></div></div>`:""}
+    </div>
+    <div class="hero-insights card">
+      <div class="section-row"><h2>Spending Analytics</h2><button class="range-btn active" data-page-go="analytics">This Month</button></div>
+      <div class="hero-analytics-body">
+        <div class="hero-donut" style="--spent:${Math.min(100,spentTotal?100:0)}"><div><strong class="donut-amount">${moneyParts(expense)}</strong><small>Total spent</small></div></div>
+        <div class="hero-category-list">
+          ${topCats.map(([c,v])=>`<div><span>${categoryLabel(c)}</span><strong>${spentTotal?Math.round(v/spentTotal*100):0}%</strong></div>`).join("")||'<div><span>No spending yet</span><strong>0%</strong></div>'}
+        </div>
+      </div>
+      <div class="hero-chip-row">
+        ${["Food & Dining","Groceries","Transport","Bills & Utilities"].map(c=>`<span>${categoryLabel(c)}</span>`).join("")}
+      </div>
     </div>
   </div>
-  <div class="grid2 spaced">
-    <div class="card bottom-card"><div class="section-row"><h2>Accounts Overview</h2><button class="link-btn" data-action="add-account">+ Add Account</button></div>
-      ${data.accounts.slice(0,2).map(a=>`<div class="list-row account-overview-row"><div class="overview-left">${accountVisual(a)}<div><strong>${esc(a.name)}</strong><small>${esc(a.type)}</small></div></div><strong>${money(a.balance)} <span class="row-arrow">›</span></strong></div>`).join("")||'<div class="empty">No accounts yet.</div>'}
-      ${data.accounts.length>0?`<button class="link-btn view-all-btn" data-page-go="accounts">View All Accounts →</button>`:""}
-    </div>
-    <div class="card bottom-card"><div class="section-row"><h2>Recent Transactions</h2><button class="link-btn" data-page-go="transactions">View All</button></div>
+  <div class="grid4 metrics-grid">
+    ${metric("Total Balance",totalBalance(),"All accounts",trendBars.map(x=>x.income+x.saving+totalBalance()/8))}
+    ${metric("This Month Income",income,"Money received",trendBars.map(x=>x.income))}
+    ${metric("This Month Expenses",expense,"Money spent",trendBars.map(x=>x.amount))}
+    ${metric("Net Savings",savings,"Income − expenses",trendBars.map(x=>x.saving))}
+  </div>
+  <div class="dashboard-section-head">
+    <h2>Your Accounts</h2>
+    <button class="link-btn" data-page-go="accounts">View All</button>
+  </div>
+  <div class="dashboard-account-cards">
+    ${data.accounts.slice(0,4).map(a=>accountCard(a,"dashboard")).join("")||'<div class="card empty">No accounts yet. Add your first account.</div>'}
+  </div>
+  <div class="dashboard-split spaced">
+    <div class="card bottom-card recent-card">
+      <div class="section-row"><h2>Recent Transactions</h2><button class="link-btn" data-page-go="transactions">View All</button></div>
       ${recent.map(transactionRow).join("")||'<div class="empty">No transactions yet. Tap + to add one.</div>'}
-      ${recent.length?`<button class="link-btn view-all-btn" data-page-go="transactions">View All Transactions →</button>`:""}
+    </div>
+    <div class="card bottom-card monthly-trend-card money-flow-card">
+      <div class="section-row money-flow-head"><h2>Money Flow</h2><div class="flow-legend"><span><i class="saving-dot"></i>Total Saving</span><span><i class="expense-dot"></i>Total Expense</span><button class="range-btn active" type="button">Weekly</button></div></div>
+      <div class="money-flow-chart">
+        ${moneyFlowSvg(dailySaving,dailyExpense,moneyFlowLabels,flowTooltip)}
+      </div>
     </div>
   </div>
-  <div class="tip-bar"><span>💡</span><span><strong>Tip:</strong> Add more transactions to get better insights and AI recommendations.</span><button data-action="dismiss-tip">×</button></div>`;
+  <div class="dashboard-card-grid spaced">
+    <div class="card bottom-card"><div class="section-row"><h2>Accounts Overview</h2><button class="link-btn" data-action="add-account">+ Add Account</button></div>
+      ${data.accounts.slice(0,2).map(a=>`<div class="list-row account-overview-row"><div class="overview-left">${accountVisual(a)}<div><strong>${esc(a.name)}</strong><small>${accountTypeLabel(a.type)}</small></div></div><strong>${money(a.balance)}</strong></div>`).join("")||'<div class="empty">No accounts yet.</div>'}
+      ${data.accounts.length>0?`<button class="link-btn view-all-btn" data-page-go="accounts">View All Accounts</button>`:""}
+    </div>
+    <div class="card bottom-card"><div class="section-row"><h2>Goals & budgets</h2><button class="link-btn" data-page-go="goals">Open Goals</button></div>
+      <div class="dashboard-mini-stat"><span>Goal remaining</span><strong>${money(plan.totalRemaining)}</strong></div>
+      <div class="dashboard-mini-stat"><span>Monthly goal need</span><strong>${money(plan.monthly)}</strong></div>
+      <div class="progress"><i style="width:${budgetPct}%"></i></div>
+      <small class="muted">${money(budgetUsed)} spent from ${money(budgetLimit)} budgeted this month</small>
+    </div>
+    <div class="card bottom-card"><div class="section-row"><h2>Upcoming commitments</h2><button class="link-btn" data-page-go="emis">Open EMI & Loans</button></div>
+      <div class="dashboard-mini-stat"><span>Next 7 days</span><strong>${money(upcoming)}</strong></div>
+      ${nextEmi?`<div class="list-row"><div><strong>${esc(nextEmi.name)}</strong><small>${esc(formatEmiDate(nextEmi.nextDate))}</small></div><strong>${money(Math.min(Number(nextEmi.monthly||0),Number(nextEmi.remainingAmount||0)))}</strong></div>`:'<div class="empty">No upcoming EMI commitments.</div>'}
+    </div>
+  </div>`;
 }
 function transactionRow(t){
   const sign=t.type==="income"?"+":t.type==="expense"?"−":t.type==="goal"?"↗":"⇄";
-  return `<div class="list-row"><div><strong>${sign} ${money(t.amount)} · ${esc(t.category||"Transfer")}</strong><small>${esc(t.note||"")} ${t.note?"· ":""}${esc(txDisplayDateTime(t))} · ${esc(t.accountName||"")}${t.toAccountName?` → ${esc(t.toAccountName)}`:""}</small></div><span class="${t.type}">${t.type}</span></div>`;
+  return `<div class="list-row"><div><strong>${sign} ${money(t.amount)} · ${categoryLabel(t.category||"Transfer")}</strong><small>${esc(t.note||"")} ${t.note?"· ":""}${esc(txDisplayDateTime(t))} · ${accountLabelByName(t.accountName||"")}${t.toAccountName?` → ${accountLabelByName(t.toAccountName)}`:""}</small></div><span class="${t.type}">${t.type}</span></div>`;
 }
 
 function accounts(){
   return `<div class="section-row page-head"><div><div class="eyebrow">🏦 MONEY HUB</div><h2>Your Accounts</h2><p class="muted">Keep every bank, wallet and card in one clean view.</p></div><button class="primary" data-action="add-account">+ Add Account</button></div>
   <div class="account-summary-row"><div class="summary-pill"><span>💰</span><div><small>Total Money</small><strong>${money(totalBalance())}</strong><em>Included accounts</em></div></div><div class="summary-pill"><span>🚫</span><div><small>Excluded</small><strong>${money(excludedBalance())}</strong><em>Cards / other excluded</em></div></div><div class="summary-pill"><span>🏦</span><div><small>Accounts</small><strong>${data.accounts.length}</strong><em>${data.accounts.filter(a=>a.includeInTotal!==false).length} included</em></div></div></div>
-  <div class="accounts-modern-grid">${data.accounts.map(a=>`<div class="card account-modern-card"><div class="account-card-top"><div class="account-brand">${accountVisual(a)}<div><strong>${esc(a.name)}</strong><small>${esc(a.type)}</small></div></div><div class="row-actions"><button class="secondary ghost" data-edit-account="${a.id}">Edit</button><button class="danger ghost" data-delete-account="${a.id}">Delete</button></div></div><div class="account-card-balance">${money(a.balance)}</div><div class="account-card-footer"><label class="include-total-toggle"><input type="checkbox" data-toggle-account-total="${a.id}" ${a.includeInTotal!==false?'checked':''}><span>Include in Total Money</span></label><span>${a.includeInTotal!==false?'✓ Included':'Excluded'} · ✨ ${data.goals.filter(g=>g.accountId===a.id).length} goal${data.goals.filter(g=>g.accountId===a.id).length===1?'':'s'}</span></div></div>`).join("")||'<div class="card empty">No accounts yet. Add your first account.</div>'}</div>`;
+  <div class="accounts-modern-grid wallet-card-grid">${data.accounts.map(a=>accountCard(a,"full")).join("")||'<div class="card empty">No accounts yet. Add your first account.</div>'}</div>`;
 }
 
 function transactions(){
@@ -501,30 +737,37 @@ function analytics(){
   <div class="grid2 spaced">
     <div class="card">
       <div class="section-row"><div><h2>${icon("pie-chart",18)} Where You Spend</h2><small class="muted">Expense breakdown by category</small></div></div>
-      <div class="rank-list">${topCats.slice(0,8).map(([c,v],i)=>`<div class="rank-row"><div class="rank-label"><b>${i+1}</b><span>${esc(c)}</span><strong>${money(v)}</strong></div><div class="rank-track"><i style="width:${v/maxCat*100}%"></i></div></div>`).join("")||'<div class="empty">No expenses in this period.</div>'}</div>
+      <div class="rank-list">${topCats.slice(0,8).map(([c,v],i)=>`<div class="rank-row"><div class="rank-label"><b>${i+1}</b><span>${categoryLabel(c)}</span><strong>${money(v)}</strong></div><div class="rank-track"><i style="width:${v/maxCat*100}%"></i></div></div>`).join("")||'<div class="empty">No expenses in this period.</div>'}</div>
     </div>
     <div class="card">
       <div class="section-row"><div><h2>${icon("wallet-cards",18)} Cash Flow by Account</h2><small class="muted">Net movement in selected period</small></div></div>
-      ${Object.entries(byAccount).sort((a,b)=>b[1]-a[1]).map(([a,v])=>`<div class="account-flow"><span>${esc(a)}</span><strong class="${v>=0?'income':'expense'}">${v>=0?'+':''}${money(v)}</strong></div>`).join("")||'<div class="empty">No account activity in this period.</div>'}
+      ${Object.entries(byAccount).sort((a,b)=>b[1]-a[1]).map(([a,v])=>`<div class="account-flow"><span>${accountLabelByName(a)}</span><strong class="${v>=0?'income':'expense'}">${v>=0?'+':''}${money(v)}</strong></div>`).join("")||'<div class="empty">No account activity in this period.</div>'}
     </div>
   </div>
 
   <div class="grid3 spaced analytics-bottom-kpis">
-    ${metric("Top Category",topCats[0]?topCats[0][1]:0,topCats[0]?topCats[0][0]:"No expenses")}
+    ${metric("Top Category",topCats[0]?topCats[0][1]:0,topCats[0]?`${categoryEmoji(topCats[0][0])} ${topCats[0][0]}`:"No expenses")}
     ${metric("Goal Money Remaining",goalRemaining,"Across active goals")}
-    ${metric("Transactions",rangeTx.length,monthly?"Selected months":"Selected dates")}
+    ${metric("Transactions",rangeTx.length,monthly?"Selected months":"Selected dates",[],{format:"count"})}
   </div>`;
 }
 function goals(){
   const plan=overallGoalPlan();
   const noDeadline=plan.active.filter(x=>x.months===null).length;
-  return `<div class="section-row page-head"><div><h2>Goals</h2><p class="muted">Each goal is linked to an account. Adding money reserves it from that account and does not count as spending.</p></div><button class="primary" data-action="add-goal">+ Add Goal</button></div>
+  const goalCount=data.goals.length;
+  const completion=plan.totalTarget?Math.min(100,plan.totalSaved/plan.totalTarget*100):goalCount?100:0;
+  return `<div class="money-section-page goals-page"><div class="section-row page-head money-page-head"><div><span class="eyebrow">🎯 SAVINGS PLAN</span><h2>Goals</h2><p class="muted">Each goal is linked to an account. Adding money reserves it from that account and does not count as spending.</p></div><button class="primary" data-action="add-goal">+ Add Goal</button></div>
+  <div class="section-summary-grid goals-summary-grid">
+    <div class="summary-pill summary-blue"><span>🎯</span><div><small>Active goals</small><strong>${goalCount}</strong><em>${plan.active.length} still in progress</em></div></div>
+    <div class="summary-pill summary-green"><span>💰</span><div><small>Total saved</small><strong>${money(plan.totalSaved)}</strong><em>${completion.toFixed(0)}% of targets</em></div></div>
+    <div class="summary-pill summary-amber"><span>📅</span><div><small>Monthly need</small><strong>${money(plan.monthly)}</strong><em>${noDeadline?`${noDeadline} without date`:"All dated goals"}</em></div></div>
+  </div>
   <div class="card goal-plan-card ${plan.monthly>0?'':'goal-plan-complete'}">
     <div class="section-row"><div><div class="eyebrow">🎯 OVERALL SAVING PLAN</div><h2>${plan.monthly>0?`${money(plan.monthly)} / month`:'All goals completed 🎉'}</h2><small class="muted">Based on all active goals, their saved amounts and target deadlines.</small></div><div class="goal-plan-total"><small>Total remaining</small><strong>${money(plan.totalRemaining)}</strong></div></div>
     ${plan.monthly>0?`<div class="goal-plan-stats"><div><small>Total target</small><strong>${money(plan.totalTarget)}</strong></div><div><small>Total saved</small><strong>${money(plan.totalSaved)}</strong></div><div><small>Monthly saving needed</small><strong>${money(plan.monthly)}</strong></div></div>`:`<p class="muted">You have reached every goal target.</p>`}
     ${noDeadline?`<small class="muted block">ℹ️ ${noDeadline} active goal${noDeadline===1?'':'s'} has no target date and is not included in the monthly plan.</small>`:''}
   </div>
-  <div class="grid2">${data.goals.map(g=>{const target=Number(g.target||0),saved=Number(g.saved||0),remaining=Math.max(0,target-saved),pct=Math.min(100,target?saved/target*100:0),monthly=goalMonthlyRequired(g),months=goalMonthsRemaining(g);const linked=data.accounts.find(a=>a.id===g.accountId);return `<div class="card">
+  <div class="goals-grid grid2">${data.goals.map(g=>{const target=Number(g.target||0),saved=Number(g.saved||0),remaining=Math.max(0,target-saved),pct=Math.min(100,target?saved/target*100:0),monthly=goalMonthlyRequired(g),months=goalMonthsRemaining(g);const linked=data.accounts.find(a=>a.id===g.accountId);return `<div class="card goal-card">
     <div class="section-row"><div><h2>${esc(g.name)}</h2><small>${g.targetDate?`Target ${esc(g.targetDate)}`:"No target date"}</small></div><div class="row-actions"><button class="secondary ghost" data-edit-goal="${g.id}">Edit</button><button class="danger ghost" data-delete-goal="${g.id}">Delete</button></div></div>
     <div class="goal-linked-account"><span>🏦</span><div><small>Linked account</small><strong>${linked?esc(linked.name):"Not linked"}</strong></div></div>
     <div class="grid3 goal-stats"><div><small>Saved</small><strong>${money(saved)}</strong></div><div><small>Remaining</small><strong>${money(remaining)}</strong></div><div><small>Target</small><strong>${money(target)}</strong></div></div>
@@ -532,11 +775,20 @@ function goals(){
     <div class="progress"><i style="width:${pct}%"></i></div><small>${pct.toFixed(0)}% complete</small>
     ${linked?(g.autoTrackAccount?`<small class="muted block goal-reserve">🔗 Auto-tracked from ${esc(linked.name)} · goal deposit follows this account's current balance.</small>`:`<small class="muted block goal-reserve">Reserved from ${esc(linked.name)} · available balance ${money(Math.max(0,Number(linked.balance||0)-saved))}</small>`):`<small class="danger-text block">Link an account before adding money.</small>`}
     <button class="primary full goal-add-btn" data-add-goal-money="${g.id}" ${remaining<=0||!linked||g.autoTrackAccount?'disabled':''}>+ Add Money from ${linked?esc(linked.name):'Linked Account'}</button>
-  </div>`}).join("")||'<div class="card empty">No goals yet. Create one and link it to an account.</div>'}</div>`;
+  </div>`}).join("")||'<div class="card empty section-empty-state"><div class="big-emoji">🎯</div><strong>No goals yet</strong><p class="muted">Create a goal, link it to an account, and MoneyPilot will show the monthly saving plan here.</p><button class="primary" data-action="add-goal">Create Goal</button></div>'}</div></div>`;
 }
 function budgets(){
-  return `<div class="section-row page-head"><div><h2>Budgets</h2><p class="muted">Set category spending limits.</p></div><button class="primary" data-action="add-budget">+ Add Budget</button></div>
-  <div class="grid2">${data.budgets.map(b=>{const spent=sum(monthTx(),"expense") && monthTx().filter(t=>t.category===b.category&&t.type==="expense").reduce((s,t)=>s+Number(t.amount),0);const pct=Math.min(100,b.limit?spent/b.limit*100:0);return `<div class="card"><div class="section-row"><h2>${esc(b.category)}</h2><button class="danger ghost" data-delete-budget="${b.id}">Delete</button></div><strong>${money(spent)} / ${money(b.limit)}</strong><div class="progress"><i style="width:${pct}%"></i></div></div>`}).join("")||'<div class="card empty">No budgets yet.</div>'}</div>`;
+  const monthTransactions=monthTx();
+  const totalLimit=data.budgets.reduce((s,b)=>s+Number(b.limit||0),0);
+  const totalSpent=data.budgets.reduce((s,b)=>s+monthTransactions.filter(t=>t.category===b.category&&t.type==="expense").reduce((x,t)=>x+Number(t.amount||0),0),0);
+  const overallPct=Math.min(100,totalLimit?totalSpent/totalLimit*100:0);
+  return `<div class="money-section-page budgets-page"><div class="section-row page-head money-page-head"><div><span class="eyebrow">💰 SPENDING LIMITS</span><h2>Budgets</h2><p class="muted">Set category spending limits and track this month's usage.</p></div><button class="primary" data-action="add-budget">+ Add Budget</button></div>
+  <div class="card budget-overview-card">
+    <div><span class="eyebrow">MONTHLY BUDGET</span><h2>${money(totalSpent)} spent</h2><p class="muted">Across ${data.budgets.length} budget${data.budgets.length===1?'':'s'} this month.</p></div>
+    <div class="budget-overview-meter"><strong>${overallPct.toFixed(0)}%</strong><small>${money(Math.max(0,totalLimit-totalSpent))} left</small></div>
+    <div class="progress"><i style="width:${overallPct}%"></i></div>
+  </div>
+  <div class="budget-grid grid2">${data.budgets.map(b=>{const spent=monthTransactions.filter(t=>t.category===b.category&&t.type==="expense").reduce((s,t)=>s+Number(t.amount),0);const pct=Math.min(100,b.limit?spent/b.limit*100:0),left=Math.max(0,Number(b.limit||0)-spent),over=spent>Number(b.limit||0);return `<div class="card budget-card ${over?'budget-over':''}"><div class="section-row"><div class="budget-title"><span>${categoryEmoji(b.category)}</span><div><h2>${esc(b.category)}</h2><small>${over?'Over budget':'On track'}</small></div></div><button class="danger ghost" data-delete-budget="${b.id}">Delete</button></div><div class="budget-values"><strong>${money(spent)}</strong><span>/ ${money(b.limit)}</span></div><div class="progress"><i style="width:${pct}%"></i></div><div class="budget-foot"><span>${pct.toFixed(0)}% used</span><strong>${money(left)} left</strong></div></div>`}).join("")||'<div class="card empty section-empty-state"><div class="big-emoji">💰</div><strong>No budgets yet</strong><p class="muted">Add a category budget and track your monthly spending limits here.</p><button class="primary" data-action="add-budget">Create Budget</button></div>'}</div></div>`;
 }
 
 function formatEmiDate(value){
@@ -700,8 +952,8 @@ function emis(){
     </div>`;
   }).join("");
 
-  return `<div class="emi-loans-page">
-    <div class="section-row page-head"><div><h2>💳 EMIs & Loans</h2><p class="muted">Track your monthly EMIs and every amount you owe or are owed.</p></div><div class="row-actions"><button class="secondary" data-action="add-loan">+ Add Loan</button><button class="primary" data-action="add-emi">+ Add EMI / Loan</button></div></div>
+  return `<div class="money-section-page emi-loans-page">
+    <div class="section-row page-head money-page-head"><div><span class="eyebrow">💳 COMMITMENTS</span><h2>EMIs & Loans</h2><p class="muted">Track your monthly EMIs and every amount you owe or are owed.</p></div><div class="row-actions"><button class="secondary" data-action="add-loan">+ Add Loan</button><button class="primary" data-action="add-emi">+ Add EMI / Loan</button></div></div>
 
     <div class="loan-summary-row v23-summary">
       <div class="summary-pill summary-liability"><span>💳</span><div><small>EMI Remaining</small><strong>${money(emiRemaining)}</strong></div></div>
@@ -712,27 +964,84 @@ function emis(){
     <section class="loan-section receive-section">
       <div class="loan-section-head"><div><h2>💚 Money Someone Owes You</h2><span class="section-badge receive-badge">To Receive</span></div><button class="secondary receive-btn" data-action="add-loan">＋ Add Loan (To Receive)</button></div>
       <p class="muted">Money you have already given and expect to receive back.</p>
-      <div class="grid2 spaced">${lent.map(loanCard).join("")||'<div class="card empty">No money to receive yet.</div>'}</div>
+      <div class="grid2 spaced">${lent.map(loanCard).join("")||'<div class="card empty loan-empty">No money to receive yet.</div>'}</div>
     </section>
 
     <section class="loan-section give-section">
       <div class="loan-section-head"><div><h2>❤️ Money You Owe Someone</h2><span class="section-badge give-badge">To Give</span></div><button class="secondary give-btn" data-action="add-loan">＋ Add Loan (To Give)</button></div>
       <p class="muted">Money you still need to pay someone. This is excluded from Total Money.</p>
-      <div class="grid2 spaced">${owe.map(loanCard).join("")||'<div class="card empty">No money to give yet.</div>'}</div>
+      <div class="grid2 spaced">${owe.map(loanCard).join("")||'<div class="card empty loan-empty">No money to give yet.</div>'}</div>
     </section>
 
     <section class="loan-section emi-section">
       <div class="loan-section-head"><div><h2>💜 EMIs / Loans You Are Paying</h2><span class="section-badge liability-badge">Liability</span></div><button class="secondary emi-btn" data-action="add-emi">＋ Add EMI / Loan</button></div>
       <div class="emi-table-wrap"><div class="emi-table">
         <div class="emi-table-head"><div>Loan / EMI</div><div>Total Amount</div><div>Monthly EMI</div><div>Total EMIs</div><div>Paid EMIs</div><div>Remaining</div><div>Amount Paid</div><div>Remaining Amount</div><div>Next Due</div><div>Account</div><div>Action</div></div>
-        ${emiRows||'<div class="card empty">No EMIs yet. Add your first EMI or loan.</div>'}
+        ${emiRows||'<div class="card empty loan-empty">No EMIs yet. Add your first EMI or loan.</div>'}
       </div></div>
     </section>
     <div class="loan-disclaimer">ℹ️ Loans (To Receive / To Give) and EMIs are tracked separately and are <strong>not included in Total Money</strong>.</div>
   </div>`;
 }
 
-function settings(){return `<div class="grid2"><div class="card"><h2>Categories</h2><div class="chip-list">${data.categories.map(c=>`<span class="chip">${esc(c)} <button data-delete-category="${esc(c)}">×</button></span>`).join("")}</div><button class="primary" data-action="add-category">+ Add Category</button></div><div class="card"><h2>Account Types</h2><p class="muted">Create custom account types just like categories.</p><div class="chip-list">${(data.accountTypes||[]).map(t=>`<span class="chip">${esc(t)} <button data-delete-account-type="${esc(t)}">×</button></span>`).join("")}</div><button class="primary" data-action="add-account-type">+ Add Account Type</button></div><div class="card"><h2>Import your TimelyBills Excel</h2><p class="muted">Import transaction history from a TimelyBills Excel or CSV statement. Your existing account balances are not changed unless you choose to update them.</p><div class="import-help"><strong>Recommended</strong><span>Use TimelyBills → Transactions → Download → Excel. A Transaction List is easiest to import. TimelyBills also supports grouped Excel statements with separate sheets per account.</span></div><label class="primary file-btn import-excel-label">Choose Excel / CSV<input id="timelyBillsFile" type="file" accept=".xlsx,.xls,.csv" hidden></label><small class="muted block">Supports .xlsx, .xls and .csv</small></div><div class="card"><h2>Backup</h2><p class="muted">Use My Money Backup for moving your complete app data between browsers.</p><button class="secondary" data-action="export">Export Backup</button><label class="secondary file-btn">Import Backup<input id="importFile" type="file" accept=".json" hidden></label><button class="danger" data-action="clear">Clear Local Data</button></div></div>`}
+function settings(){return `<div class="settings-page">
+  <div class="card settings-card tag-card"><div class="settings-card-head"><div><span class="eyebrow">ORGANIZE</span><h2>Categories</h2><p class="muted">Keep your spending labels clean and easy to scan.</p></div><strong>${data.categories.length}</strong></div><div class="chip-list">${data.categories.map(c=>`<span class="chip">${categoryLabel(c)} <button aria-label="Delete ${esc(c)}" data-delete-category="${esc(c)}">×</button></span>`).join("")}</div><button class="primary" data-action="add-category">+ Add Category</button></div>
+  <div class="card settings-card tag-card"><div class="settings-card-head"><div><span class="eyebrow">ACCOUNTS</span><h2>Account Types</h2><p class="muted">Create custom account types just like categories.</p></div><strong>${(data.accountTypes||[]).length}</strong></div><div class="chip-list">${(data.accountTypes||[]).map(t=>`<span class="chip">${accountTypeLabel(t)} <button aria-label="Delete ${esc(t)}" data-delete-account-type="${esc(t)}">×</button></span>`).join("")}</div><button class="primary" data-action="add-account-type">+ Add Account Type</button></div>
+  <div class="card settings-card import-card"><div class="settings-card-head"><div><span class="eyebrow">IMPORT</span><h2>Import TimelyBills Data</h2><p class="muted">Bring in Excel or CSV transaction history without changing balances unless you choose to.</p></div></div><div class="import-help"><strong>Recommended</strong><span>Use TimelyBills → Transactions → Download → Excel. A Transaction List is easiest to import.</span></div><label class="primary file-btn import-excel-label">Choose Excel / CSV<input id="timelyBillsFile" type="file" accept=".xlsx,.xls,.csv" hidden></label><small class="muted block">Supports .xlsx, .xls and .csv</small></div>
+  <div class="card settings-card backup-card"><div class="settings-card-head"><div><span class="eyebrow">DATA</span><h2>Backup</h2><p class="muted">Move your complete MoneyPilot data between browsers.</p></div></div><div class="backup-actions"><button class="secondary" data-action="export">Export Backup</button><label class="secondary file-btn">Import Backup<input id="importFile" type="file" accept=".json" hidden></label><button class="danger" data-action="clear">Clear Local Data</button></div></div>
+</div>`}
+
+document.addEventListener("click",e=>{
+  const txTab=e.target.closest?.(".tx-tabs [data-tab]");
+  if(txTab){
+    e.preventDefault();
+    e.stopPropagation();
+    switchTab(txTab.dataset.tab);
+    return;
+  }
+  const trigger=e.target.closest?.("[data-action]");
+  if(trigger){
+    e.preventDefault();
+    e.stopPropagation();
+    actions(trigger.dataset.action);
+    return;
+  }
+  const pickerButton=e.target.closest?.("[data-picker-button]");
+  if(pickerButton){
+    e.preventDefault();
+    e.stopPropagation();
+    const picker=pickerButton.closest("[data-picker]");
+    document.querySelectorAll("[data-picker].open").forEach(p=>{if(p!==picker)p.classList.remove("open")});
+    picker?.classList.toggle("open");
+    return;
+  }
+  const pickerOption=e.target.closest?.("[data-picker-option]");
+  if(pickerOption){
+    e.preventDefault();
+    e.stopPropagation();
+    const picker=pickerOption.closest("[data-picker]");
+    const input=picker?.querySelector("input[type='hidden']");
+    const label=picker?.querySelector("[data-picker-button] span");
+    if(input) input.value=pickerOption.value;
+    if(label) label.innerHTML=pickerOption.querySelector("span")?.innerHTML||pickerOption.textContent;
+    picker?.querySelectorAll("[data-picker-option]").forEach(o=>o.classList.toggle("active",o===pickerOption));
+    picker?.classList.remove("open");
+    if(input?.name==="emiId" && pickerOption.dataset.amount) $("txAmount").value=pickerOption.dataset.amount;
+    if(input?.name==="goalId" && pickerOption.dataset.remaining) $("txAmount").max=pickerOption.dataset.remaining;
+    input?.dispatchEvent(new Event("change",{bubbles:true}));
+    return;
+  }
+  const pageLink=e.target.closest?.("[data-page],[data-page-go],[data-mobile-more-page]");
+  if(pageLink){
+    e.preventDefault();
+    e.stopPropagation();
+    currentPage=pageLink.dataset.page || pageLink.dataset.pageGo || pageLink.dataset.mobileMorePage;
+    const more=$("mobileMoreMenu");
+    if(more){more.classList.add("hidden");more.setAttribute("aria-hidden","true");}
+    render();
+  }
+  document.querySelectorAll("[data-picker].open").forEach(p=>p.classList.remove("open"));
+},true);
 
 function bindPageActions(){
   document.querySelectorAll("[data-page-go]").forEach(b=>b.onclick=()=>{currentPage=b.dataset.pageGo;render()});
@@ -765,35 +1074,6 @@ function bindPageActions(){
   document.querySelectorAll("[data-edit-tx]").forEach(b=>b.onclick=()=>editTransaction(b.dataset.editTx));
 }
 
-async function openSmartDecision(){
-  const mt=monthTx(), wt=weekTx();
-  const payload={
-    today:today(),
-    accounts:data.accounts.map(a=>({name:a.name,type:a.type,balance:Number(a.balance||0),includeInTotal:a.includeInTotal!==false})),
-    loans:(data.loans||[]).map(l=>({person:l.person,direction:l.direction,amount:Number(l.amount||0),settled:Number(l.direction==='lent'?l.repaid:l.paid||0),dueDate:l.dueDate||null,note:l.note||''})),
-    goals:(data.goals||[]).map(g=>({name:g.name,target:Number(g.target||0),saved:Number(g.saved||0),remaining:Math.max(0,Number(g.target||0)-Number(g.saved||0)),targetDate:g.targetDate||null,linkedAccount:(data.accounts||[]).find(a=>a.id===g.accountId)?.name||null,autoTrack:!!g.autoTrackAccount})),
-    budgets:data.budgets,
-    emis:(data.emis||[]).map(e=>({name:e.name,lender:e.lender,totalAmount:Number(e.totalAmount||0),remainingAmount:Number(e.remainingAmount||0),monthly:Number(e.monthly||0),remainingEmis:Number(e.remainingEmis||0),paymentDay:Number(e.paymentDay||1),paymentAccount:e.paymentAccount||null,nextDate:calculateEmiNextDate(e),nextDateDisplay:formatEmiDate(calculateEmiNextDate(e))})),
-    categories:data.categories,
-    thisMonth:{income:sum(mt,"income"),expense:sum(mt,"expense"),savings:sum(mt,"income")-sum(mt,"expense")},
-    thisWeek:{income:sum(wt,"income"),expense:sum(wt,"expense")},
-    goalLinkedAccountReserve:goalReservedBalance(),
-    safeToSpendFormula:"Weekly income - weekly spending - upcoming EMI/loan commitments - weekly goal funding - balances of goal-linked accounts.",
-    transactionHistory:[...data.transactions].sort((a,b)=>b.date.localeCompare(a.date)),
-    spendingDefinition:"Weekly spending = expense transactions dated Monday-Sunday of the current local week. Exclude income, transfers between own accounts, balances, and long-term accumulated savings.",
-    safeSpendRule:"The app-calculated dashboard safe-to-spend value is authoritative. Do not replace it with total account balance. Exclude money already held in accounts linked to goals from spendable money, and consider every supplied EMI, loan commitment, goal funding and actual spending. If the safe amount is below zero, display ₹0 and explain why."
-  };
-  modal("🧠 AI Money Decision",`<div class="ai-loading"><div class="big-emoji">🧠</div><h3>Analyzing your money…</h3><p class="muted">AI is reviewing your spending, goals, balances and recent transactions.</p></div>`);
-  try{
-    const { getSmartMoneyAdvice } = await import("./ai.js");
-    const advice=await getSmartMoneyAdvice(payload);
-    $("modalBody").innerHTML=`<div class="ai-result"><div class="ai-badge">AI MONEY ADVISOR</div><div class="ai-text">${esc(advice).replace(/\n/g,"<br>")}</div><p class="muted ai-note">This is a recommendation, not an automatic money transfer. Review every action before making it.</p></div>`;
-  }catch(e){
-    $("modalBody").innerHTML=`<div class="empty"><h3>AI advisor isn't connected yet.</h3><p>${esc(e.message||"Enable Firebase AI Logic for this Firebase project, then try again.")}</p><button class="primary" id="retryAi">Try Again</button></div>`;
-    $("retryAi").onclick=openSmartDecision;
-  }
-}
-
 function actions(a){
   if(a==="add-transaction") openTransaction();
   if(a==="add-account") openAccount();
@@ -803,55 +1083,67 @@ function actions(a){
   if(a==="add-budget") openBudget();
   if(a==="add-emi") openEmi();
   if(a==="add-loan") openLoan();
-  if(a==="smart") openSmartDecision();
   if(a==="dismiss-tip"){ const el=document.querySelector(".tip-bar"); if(el) el.remove(); }
   if(a==="export") exportBackup();
-  if(a==="clear" && confirm("Clear all local My Money data?")){localStorage.removeItem(KEY);data=load();render();toast("Local data cleared.");}
+  if(a==="clear" && confirm("Clear all local MoneyPilot data?")){localStorage.removeItem(KEY);data=load();render();toast("Local data cleared.");}
 }
 
-function modal(title,body){$("modalTitle").textContent=title;$("modalBody").innerHTML=body;$("modal").classList.remove("hidden")}
+function modal(title,body){$("modalTitle").textContent=title;$("modalBody").innerHTML=body;$("modal").classList.remove("hidden");refreshIcons();}
 function closeModal(){$("modal").classList.add("hidden")}
 
 function openTransaction(){
-  const options=data.accounts.map(a=>`<option value="${a.id}">${esc(a.name)} · ${money(a.balance)}</option>`).join("");
-  const transactionCategories=[...new Set([...(data.categories||[]),"Bills & Utilities","Goal Savings"])];
-  const cats=transactionCategories.map(c=>`<option>${esc(c)}</option>`).join("");
+  const transactionCategories=[...new Set([...(data.categories||[]),"Bills & Utilities","Savings & Goals"])];
+  const cats=categoryPickerItems(transactionCategories);
+  const incomeCats=categoryPickerItems([...new Set(["Salary",...transactionCategories])]);
+  const accounts=accountPickerItems();
   const emis=data.emis||[];
   const goals=data.goals||[];
-  modal("Add Transaction",`<div class="tabs"><button class="active" data-tab="expense">Expense</button><button data-tab="income">Income</button><button data-tab="transfer">Transfer</button><button data-tab="emi">EMI Payment</button><button data-tab="goal">Goal Contribution</button></div>
-  <form id="txForm" class="form-grid"><input type="hidden" name="type" value="expense">
-  <div class="field full"><label>Amount</label><input id="txAmount" name="amount" type="number" min="0.01" step="0.01" required placeholder="0.00"></div>
-  <div class="field expense-only"><label>Category</label><select name="category">${cats}</select></div>
-  <div class="field expense-only"><label>From Account</label><select name="accountId">${options||'<option value="">Add an account first</option>'}</select></div>
-  <div class="field income-only hidden-field"><label>Category</label><select name="incomeCategory"><option>Salary</option>${cats}</select></div>
-  <div class="field income-only hidden-field"><label>To Account</label><select name="incomeAccountId">${options||'<option value="">Add an account first</option>'}</select></div>
-  <div class="field transfer-only hidden-field"><label>From Account</label><select name="fromId">${options||'<option value="">Add an account first</option>'}</select></div>
-  <div class="field transfer-only hidden-field"><label>To Account</label><select name="toId">${options||'<option value="">Add an account first</option>'}</select></div>
-  <div class="field emi-only hidden-field full"><label>Which EMI?</label><select id="txEmiId" name="emiId"><option value="">Select EMI</option>${emis.map(e=>`<option value="${e.id}" data-amount="${Number(e.monthly||0)}">${esc(e.name)} · ${money(e.monthly)} · ${Number(e.remainingEmis||0)} left</option>`).join("")}</select></div>
-  <div class="field emi-only hidden-field"><label>Category</label><select name="emiCategory"><option selected>Bills &amp; Utilities</option>${transactionCategories.filter(c=>c!=="Bills & Utilities").map(c=>`<option>${esc(c)}</option>`).join("")}</select></div>
-  <div class="field emi-only hidden-field"><label>From Account</label><select name="emiAccountId">${options||'<option value="">Add an account first</option>'}</select></div>
-  <div class="field goal-only hidden-field full"><label>Which Goal?</label><select name="goalId"><option value="">Select Goal</option>${goals.map(g=>`<option value="${g.id}" data-remaining="${Math.max(0,Number(g.target||0)-Number(g.saved||0))}">${esc(g.name)} · ${money(g.saved||0)} saved · ${money(Math.max(0,Number(g.target||0)-Number(g.saved||0)))} left</option>`).join("")}</select></div>
-  <div class="field goal-only hidden-field"><label>Category</label><select name="goalCategory"><option selected>Goal Savings</option>${transactionCategories.filter(c=>c!=="Goal Savings").map(c=>`<option>${esc(c)}</option>`).join("")}</select></div>
-  <div class="field goal-only hidden-field"><label>From Account</label><select name="goalAccountId">${options||'<option value="">Add an account first</option>'}</select></div>
+  const emiItems=emis.map(e=>({value:e.id,label:`${esc(e.name)} · ${money(e.monthly)} · ${Number(e.remainingEmis||0)} left`,amount:Number(e.monthly||0)}));
+  const goalItems=goals.map(g=>({value:g.id,label:`${esc(g.name)} · ${money(g.saved||0)} saved · ${money(Math.max(0,Number(g.target||0)-Number(g.saved||0)))} left`,remaining:Math.max(0,Number(g.target||0)-Number(g.saved||0))}));
+  modal("Add Transaction",`<div class="tabs tx-tabs"><button type="button" class="active" data-tab="expense">${icon("arrow-down-left",15)} Expense</button><button type="button" data-tab="income">${icon("arrow-up-right",15)} Income</button><button type="button" data-tab="transfer">${icon("repeat-2",15)} Transfer</button><button type="button" data-tab="emi">${icon("credit-card",15)} EMI Payment</button><button type="button" data-tab="goal">${icon("target",15)} Goal Contribution</button></div>
+  <form id="txForm" class="form-grid tx-form" data-tx-type="expense"><input type="hidden" name="type" value="expense">
+  <div class="field full tx-amount-field"><label>Amount</label><div class="amount-control"><span>₹</span><input id="txAmount" name="amount" type="number" min="0.01" step="0.01" required placeholder="0.00"></div></div>
+  <div class="field expense-only"><label>Category</label>${customPicker("category",cats,"Food & Dining","Select category")}</div>
+  <div class="field expense-only"><label>From Account</label>${customPicker("accountId",accounts,"","Add an account first")}</div>
+  <div class="field income-only hidden-field"><label>Category</label>${customPicker("incomeCategory",incomeCats,"Salary","Select category")}</div>
+  <div class="field income-only hidden-field"><label>To Account</label>${customPicker("incomeAccountId",accounts,"","Add an account first")}</div>
+  <div class="field transfer-only hidden-field"><label>From Account</label>${customPicker("fromId",accounts,"","Add an account first")}</div>
+  <div class="field transfer-only hidden-field"><label>To Account</label>${customPicker("toId",accounts,data.accounts[1]?.id||"","Add an account first")}</div>
+  <div class="field emi-only hidden-field full"><label>Which EMI?</label>${customPicker("emiId",emiItems,"","Select EMI")}</div>
+  <div class="field emi-only hidden-field"><label>Category</label>${customPicker("emiCategory",cats,"Bills & Utilities","Select category")}</div>
+  <div class="field emi-only hidden-field"><label>From Account</label>${customPicker("emiAccountId",accounts,"","Add an account first")}</div>
+  <div class="field goal-only hidden-field full"><label>Which Goal?</label>${customPicker("goalId",goalItems,"","Select Goal")}</div>
+  <div class="field goal-only hidden-field"><label>Category</label>${customPicker("goalCategory",cats,"Savings & Goals","Select category")}</div>
+  <div class="field goal-only hidden-field"><label>From Account</label>${customPicker("goalAccountId",accounts,"","Add an account first")}</div>
   <div class="field"><label>Date</label><input name="date" type="date" value="${today()}" required></div>
   <div class="field"><label>Time</label><input name="time" type="time" value="${new Date().toTimeString().slice(0,5)}" required></div>
   <div class="field full"><label>Note</label><input name="note" placeholder="Optional note"></div>
   <button class="primary full" type="submit">Save Transaction</button></form>`);
-  document.querySelectorAll("[data-tab]").forEach(btn=>btn.onclick=()=>switchTab(btn.dataset.tab));
-  const emiSelect=$("txEmiId"); if(emiSelect) emiSelect.onchange=()=>{const opt=emiSelect.selectedOptions[0]; if(opt?.dataset.amount) $("txAmount").value=opt.dataset.amount;};
-  const goalSelect=document.querySelector('[name="goalId"]'); if(goalSelect) goalSelect.onchange=()=>{const opt=goalSelect.selectedOptions[0]; if(opt?.dataset.remaining) $("txAmount").max=opt.dataset.remaining;};
-  $("txForm").onsubmit=e=>{e.preventDefault();saveTransaction(new FormData(e.target));};
+  document.querySelectorAll(".tx-tabs [data-tab]").forEach(btn=>{
+    btn.addEventListener("click",e=>{
+      e.preventDefault();
+      e.stopPropagation();
+      switchTab(btn.dataset.tab);
+    });
+  });
+  $("txForm").onsubmit=e=>{e.preventDefault();const fd=new FormData(e.target);fd.set("type",e.target.dataset.txType||"expense");saveTransaction(fd);};
 }
 function switchTab(type){
-  $("txForm").elements.type.value=type;
-  document.querySelectorAll("[data-tab]").forEach(b=>b.classList.toggle("active",b.dataset.tab===type));
-  document.querySelectorAll(".expense-only").forEach(x=>x.classList.toggle("hidden-field",type!=="expense"));
-  document.querySelectorAll(".income-only").forEach(x=>x.classList.toggle("hidden-field",type!=="income"));
-  document.querySelectorAll(".transfer-only").forEach(x=>x.classList.toggle("hidden-field",type!=="transfer"));
-  document.querySelectorAll(".emi-only").forEach(x=>x.classList.toggle("hidden-field",type!=="emi"));
-  document.querySelectorAll(".goal-only").forEach(x=>x.classList.toggle("hidden-field",type!=="goal"));
+  const form=$("txForm");
+  if(!form)return;
+  form.dataset.txType=type;
+  const typeInput=form.querySelector('input[name="type"]');
+  if(typeInput) typeInput.value=type;
+  document.querySelectorAll(".tx-tabs [data-tab]").forEach(b=>b.classList.toggle("active",b.dataset.tab===type));
+  form.querySelectorAll(".expense-only").forEach(x=>x.classList.toggle("hidden-field",type!=="expense"));
+  form.querySelectorAll(".income-only").forEach(x=>x.classList.toggle("hidden-field",type!=="income"));
+  form.querySelectorAll(".transfer-only").forEach(x=>x.classList.toggle("hidden-field",type!=="transfer"));
+  form.querySelectorAll(".emi-only").forEach(x=>x.classList.toggle("hidden-field",type!=="emi"));
+  form.querySelectorAll(".goal-only").forEach(x=>x.classList.toggle("hidden-field",type!=="goal"));
   if(type==="emi"){
-    const sel=$("txEmiId"); if(sel?.value) $("txAmount").value=sel.selectedOptions[0].dataset.amount||"";
+    const input=form.querySelector('[name="emiId"]');
+    const opt=[...form.querySelectorAll(".picker-option")].find(o=>o.value===(input?.value||"") && o.dataset.amount);
+    if(opt?.dataset.amount) $("txAmount").value=opt.dataset.amount;
   }
 }
 function saveTransaction(f){
@@ -883,14 +1175,14 @@ function saveTransaction(f){
     if(!g)return toast("Select which goal this money is for."); if(!g.accountId)return toast("Link this goal to an account first."); if(!ac)return toast("Select the account to take the money from.");
     if(ac.id!==g.accountId)return toast("This goal is linked to another account. Use its linked account.");
     const remaining=Math.max(0,Number(g.target||0)-Number(g.saved||0)); if(remaining<=0)return toast("This goal is already complete."); if(amount>remaining)return toast(`Maximum you can add is ${money(remaining)}.`); if(ac.balance<amount)return toast("Insufficient balance in this account.");
-    ac.balance-=amount; g.saved=Number(g.saved||0)+amount; data.transactions.push({id:uid("tx"),type:"goal",amount,date:f.get("date"),timestamp:`${f.get("date")}T${f.get("time")||"00:00"}`,note:f.get("note")||`Goal contribution · ${g.name}`,category:f.get("goalCategory")||"Goal Savings",accountName:ac.name,accountId:ac.id,goalId:g.id,goalAccountId:ac.id,transactionKind:"goal_contribution"});
+    ac.balance-=amount; g.saved=Number(g.saved||0)+amount; data.transactions.push({id:uid("tx"),type:"goal",amount,date:f.get("date"),timestamp:`${f.get("date")}T${f.get("time")||"00:00"}`,note:f.get("note")||`Goal contribution · ${g.name}`,category:f.get("goalCategory")||"Savings & Goals",accountName:ac.name,accountId:ac.id,goalId:g.id,goalAccountId:ac.id,transactionKind:"goal_contribution"});
   }
   save();closeModal();render();toast("Transaction saved.");
 }
 function nextEmiDate(day,current){ if(!current)return null; const d=new Date(current+"T12:00:00"); d.setMonth(d.getMonth()+1); return new Date(d.getFullYear(),d.getMonth(),Math.min(28,Number(day||1))).toISOString().slice(0,10); }
 function openAccount(editId=null){
   const existing=editId?data.accounts.find(a=>a.id===editId):null; const a=existing||{}; const types=data.accountTypes||[];
-  modal(existing?"Edit Account":"Add Account",`<form id="accountForm" class="form-grid"><div class="field full"><label>Account name</label><input name="name" value="${esc(a.name||"")}" required placeholder="e.g. HDFC Bank"></div><div class="field"><label>Account type</label><select name="type">${types.map(t=>`<option ${t===a.type?'selected':''}>${esc(t)}</option>`).join("")}</select></div><div class="field"><label>Current balance</label><input name="balance" type="number" step="0.01" value="${Number(a.balance||0)}"></div><div class="field full"><label>Logo URL <span class="muted">(optional)</span></label><input name="logo" value="${esc(a.logo||"")}" placeholder="https://.../logo.png"><small class="muted">Leave empty and My Money will automatically choose an emoji/icon based on the account name and type.</small></div><div class="field full"><label class="checkbox-row"><input type="checkbox" name="includeInTotal" ${a.includeInTotal!==false?'checked':''}> <span>Include this account in Total Money</span></label><small class="muted">Turn this off for credit cards or money you don't want treated as your actual available money.</small></div><button class="primary full">${existing?"Save Changes":"Save Account"}</button></form>`);
+  modal(existing?"Edit Account":"Add Account",`<form id="accountForm" class="form-grid"><div class="field full"><label>Account name</label><input name="name" value="${esc(a.name||"")}" required placeholder="e.g. HDFC Bank"></div><div class="field"><label>Account type</label><select name="type">${types.map(t=>accountTypeOption(t,t===a.type)).join("")}</select></div><div class="field"><label>Current balance</label><input name="balance" type="number" step="0.01" value="${Number(a.balance||0)}"></div><div class="field full"><label>Logo URL <span class="muted">(optional)</span></label><input name="logo" value="${esc(a.logo||"")}" placeholder="https://.../logo.png"><small class="muted">Leave empty and MoneyPilot will automatically choose an emoji/icon based on the account name and type.</small></div><div class="field full"><label class="checkbox-row"><input type="checkbox" name="includeInTotal" ${a.includeInTotal!==false?'checked':''}> <span>Include this account in Total Money</span></label><small class="muted">Turn this off for credit cards or money you don't want treated as your actual available money.</small></div><button class="primary full">${existing?"Save Changes":"Save Account"}</button></form>`);
   $("accountForm").onsubmit=e=>{e.preventDefault();const f=new FormData(e.target);const name=f.get("name").trim();if(!name)return; if(existing){existing.name=name;existing.type=f.get("type");existing.balance=Number(f.get("balance")||0);existing.logo=f.get("logo").trim()||null;existing.includeInTotal=f.get("includeInTotal")==="on";}else data.accounts.push({id:uid("a"),name,type:f.get("type"),balance:Number(f.get("balance")||0),logo:f.get("logo").trim()||null,includeInTotal:f.get("includeInTotal")==="on"});save();closeModal();render();toast(existing?"Account updated.":"Account added.");}
 }
 function editAccount(id){openAccount(id);}
@@ -899,7 +1191,7 @@ function openAccountType(){modal("Add Account Type",`<form id="accountTypeForm" 
 function deleteAccountType(type){if((data.accountTypes||[]).length<=1)return toast("Keep at least one account type.");if(data.accounts.some(a=>a.type===type))return toast("This account type is currently in use.");if(confirm(`Delete account type "${type}"?`)){data.accountTypes=data.accountTypes.filter(x=>x!==type);save();render();toast("Account type deleted.");}}
 function openCategory(){modal("Add Category",`<form id="catForm" class="form-grid"><div class="field full"><label>Category name</label><input name="name" required placeholder="e.g. Travel"></div><button class="primary full">Add Category</button></form>`);$("catForm").onsubmit=e=>{e.preventDefault();const n=new FormData(e.target).get("name").trim();if(n&&!data.categories.includes(n)){data.categories.push(n);save();closeModal();render();toast("Category added.");}}}
 function openGoal(){
-  const options=data.accounts.map(a=>`<option value="${a.id}">${esc(a.name)} · ${money(a.balance)} available</option>`).join("");
+  const options=data.accounts.map(a=>`<option value="${a.id}">${accountLabel(a)} available</option>`).join("");
   modal("Add Goal",`<form id="goalForm" class="form-grid">
     <div class="field full"><label>Goal name</label><input name="name" required placeholder="Goa Trip"></div>
     <div class="field"><label>Target amount</label><input name="target" type="number" min="1" step="0.01" required placeholder="50000"></div>
@@ -968,7 +1260,7 @@ function addGoalMoney(id){
   const sel=document.querySelector('[name="goalId"]'); if(sel){sel.value=id; sel.dispatchEvent(new Event("change"));}
   const accountSel=document.querySelector('[name="goalAccountId"]'); if(accountSel){accountSel.value=g.accountId; accountSel.dispatchEvent(new Event("change"));}
 }
-function openBudget(){modal("Add Budget",`<form id="budgetForm" class="form-grid"><div class="field full"><label>Category</label><select name="category">${data.categories.map(c=>`<option>${esc(c)}</option>`).join("")}</select></div><div class="field full"><label>Monthly limit</label><input name="limit" type="number" min="1" required></div><button class="primary full">Save Budget</button></form>`);$("budgetForm").onsubmit=e=>{e.preventDefault();const f=new FormData(e.target);data.budgets.push({id:uid("b"),category:f.get("category"),limit:Number(f.get("limit"))});save();closeModal();render();toast("Budget added.");}}
+function openBudget(){modal("Add Budget",`<form id="budgetForm" class="form-grid"><div class="field full"><label>Category</label><select name="category">${data.categories.map(c=>categoryOption(c)).join("")}</select></div><div class="field full"><label>Monthly limit</label><input name="limit" type="number" min="1" required></div><button class="primary full">Save Budget</button></form>`);$("budgetForm").onsubmit=e=>{e.preventDefault();const f=new FormData(e.target);data.budgets.push({id:uid("b"),category:f.get("category"),limit:Number(f.get("limit"))});save();closeModal();render();toast("Budget added.");}}
 function openLoan(editId=null){
   const existing=editId?(data.loans||[]).find(x=>x.id===editId):null; const l=existing||{}; const isLent=l.direction!=='owe';
   modal(existing?'Edit Loan':'Add Loan',`<form id="loanForm" class="form-grid">
@@ -1029,7 +1321,7 @@ function payEmi(id){
   const categories=[...new Set([...(data.categories||[]),"Bills & Utilities"])];
   modal("Complete EMI",`<form id="payEmiForm" class="form-grid">
     <div class="field full"><label>EMI</label><input value="${esc(e.name)} · ${money(payment)} · ${esc(account.name)}" disabled></div>
-    <div class="field full"><label>Category</label><select name="category">${categories.map(c=>`<option ${c==="Bills & Utilities"?'selected':''}>${esc(c)}</option>`).join("")}</select></div>
+    <div class="field full"><label>Category</label><select name="category">${categories.map(c=>categoryOption(c,c==="Bills & Utilities")).join("")}</select></div>
     <div class="field"><label>Date</label><input name="date" type="date" value="${today()}" required></div>
     <div class="field"><label>Time</label><input name="time" type="time" value="${new Date().toTimeString().slice(0,5)}" required></div>
     <div class="field full"><label>Note</label><input name="note" value="EMI payment · ${esc(e.name)}" placeholder="Optional note"></div>
@@ -1061,7 +1353,7 @@ function editTransaction(id){
   const t=data.transactions.find(x=>x.id===id); if(!t)return;
   // Editing a goal contribution or EMI payment through this simple editor is intentionally
   // constrained to its safe metadata/amount fields. Account and linked object stay fixed.
-  const editCategories=[...new Set([...(data.categories||[]),...(t.category?[t.category]:[]),"Bills & Utilities","Goal Savings"])]; const cats=editCategories.map(c=>`<option ${c===(t.category||"")?"selected":""}>${esc(c)}</option>`).join("");
+  const editCategories=[...new Set([...(data.categories||[]),...(t.category?[t.category]:[]),"Bills & Utilities","Savings & Goals"])]; const cats=editCategories.map(c=>categoryOption(c,c===(t.category||""))).join("");
   const account=data.accounts.find(a=>a.id===t.accountId)||data.accounts.find(a=>a.name===t.accountName);
   const title=t.type==="income"?"Edit Income":t.type==="expense"?"Edit Expense":t.type==="transfer"?"Edit Transfer":t.type==="goal"?"Edit Goal Contribution":"Edit Transaction";
   modal(title,`<form id="editTxForm" class="form-grid">
@@ -1185,7 +1477,7 @@ function deleteTx(id){
 }
 function deleteLoan(id){if(!confirm("Delete this loan record?"))return;data.loans=(data.loans||[]).filter(l=>l.id!==id);save();render();toast("Loan deleted.");}
 function deleteAccount(id){if(data.accounts.length<=1)return toast("Keep at least one account.");if(confirm("Delete this account?")){data.accounts=data.accounts.filter(a=>a.id!==id);save();render();}}
-function exportBackup(){const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="my-money-backup.json";a.click();URL.revokeObjectURL(a.href);toast("Backup exported.");}
+function exportBackup(){const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="moneypilot-backup.json";a.click();URL.revokeObjectURL(a.href);toast("Backup exported.");}
 function importBackup(e){const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=()=>{try{const x=JSON.parse(r.result);if(!x.accounts||!x.transactions)throw Error();data=x;save();render();toast("Backup imported.")}catch{toast("Invalid backup file.")}};r.readAsText(file);}
 
 
@@ -1299,14 +1591,14 @@ function showImportPreview(rows,fileName){
 }
 
 window.addEventListener("error", e => {
-  console.error("My Money runtime error:", e.error || e.message);
+  console.error("MoneyPilot runtime error:", e.error || e.message);
   const content = $("content");
   if (content && !content.innerHTML.trim()) {
-    content.innerHTML = `<div class="card error-card"><h2>My Money could not load this screen</h2><p class="muted">${esc(e.message || "Unknown error")}</p><button class="primary" onclick="location.reload()">Reload</button></div>`;
+    content.innerHTML = `<div class="card error-card"><h2>MoneyPilot could not load this screen</h2><p class="muted">${esc(e.message || "Unknown error")}</p><button class="primary" onclick="location.reload()">Reload</button></div>`;
   }
 });
 window.addEventListener("unhandledrejection", e => {
-  console.error("My Money promise error:", e.reason);
+  console.error("MoneyPilot promise error:", e.reason);
 });
 
 document.querySelectorAll("[data-page]").forEach(b=>b.onclick=()=>{currentPage=b.dataset.page;render()});
@@ -1319,31 +1611,19 @@ $("closeModal").onclick=closeModal;
 $("modal").onclick=e=>{if(e.target.id==="modal")closeModal()};
 $("searchInput").oninput=()=>{if(currentPage==="transactions")render()};
 
-async function authClick(){try{if(currentUser)await logout();else await login()}catch(e){toast(e.code==="auth/unauthorized-domain"?"Add 127.0.0.1 to Firebase Authorized Domains.":(e.message||"Google sign-in failed"))}}
-$("topGoogleBtn").onclick=authClick;$("sideGoogleBtn").onclick=authClick;
-watchAuth(async u=>{
-  currentUser=u;
-  const name=u?.displayName||"Guest";
-  $("userName").textContent=u?.displayName?.split(" ")[0]||"Guest";
-  $("avatar").textContent=u?.displayName?.[0]||"G";
-  $("topGoogleBtn").title=u?`Signed in as ${name}`:"Sign in with Google";
-  $("sideGoogleBtn").textContent=u?"Sign Out":"Continue with Google";
-  if($("sideUserName")) $("sideUserName").textContent=name;
-  if($("sideUserEmail")) $("sideUserEmail").textContent=u?.email||"Not signed in";
-  const photo=u?.photoURL||"";
-  const topImg=$("avatarImg"), sideImg=$("sideAvatarImg");
-  if(topImg){ topImg.src=photo; topImg.hidden=!photo; }
-  if(sideImg){ sideImg.src=photo; sideImg.hidden=!photo; }
-  if($("sideAvatarText")) $("sideAvatarText").textContent=u?.displayName?.[0]||"G";
+setLocalProfile();
+applyTheme();
+function setLocalProfile(){
+  const name="Local";
+  if($("userName")) $("userName").textContent="Local";
+  if($("avatar")) $("avatar").textContent="L";
+  if($("topLocalBtn")) { $("topLocalBtn").title="Local data mode"; $("topLocalBtn").disabled=true; }
+  if($("sideLocalBtn")) { $("sideLocalBtn").textContent="Local data only"; $("sideLocalBtn").disabled=true; }
+  if($("sideUserName")) $("sideUserName").textContent="Local data";
+  if($("sideUserEmail")) $("sideUserEmail").textContent="Stored in this browser";
+  if($("sideAvatarText")) $("sideAvatarText").textContent="L";
   if($("todayLabel")) $("todayLabel").textContent=new Intl.DateTimeFormat("en-IN",{day:"numeric",month:"short",year:"numeric",weekday:"short"}).format(new Date());
-  if(u){
-    await loadCloud(u);
-    toast(`Signed in as ${name}`);
-  } else {
-    if(cloudUnsubscribe){cloudUnsubscribe();cloudUnsubscribe=null;}
-    cloudReady=false;
-  }
-});
+}
 render();
 
 window.addEventListener("DOMContentLoaded",()=>setTimeout(refreshIcons,50));
