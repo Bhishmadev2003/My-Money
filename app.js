@@ -2,6 +2,8 @@
 const KEY = "my-money-data-v2";
 const DATA_PRESET_VERSION = 3;
 let dashboardWeekOffset = 0;
+let authApiPromise = null;
+let currentUser = null;
 const UNIVERSAL_CATEGORIES = [
   "Food & Dining",
   "Groceries",
@@ -247,6 +249,17 @@ function accountNetwork(a){
   if(/investment|mutual|stock|demat|fund/.test(s)) return "INVEST";
   return "BANK";
 }
+function accountTone(a){
+  const s=String(`${a?.type||""} ${a?.name||""}`).toLowerCase();
+  if(/cash/.test(s)) return "cash";
+  if(/upi|wallet|paytm|phonepe|gpay|google pay/.test(s)) return "wallet";
+  if(/credit|debit|card/.test(s)) return "card";
+  if(/investment|mutual|stock|demat|equity|fund/.test(s)) return "invest";
+  if(/loan|emi/.test(s)) return "loan";
+  if(/fixed|fd|recurring|rd|deposit/.test(s)) return "deposit";
+  if(/current|business/.test(s)) return "business";
+  return "bank";
+}
 function accountMaskedNumber(a){
   const seed=String(a?.id||a?.name||"0000").split("").reduce((sum,ch)=>sum+ch.charCodeAt(0),0);
   const last=String((seed*37)%10000).padStart(4,"0");
@@ -255,7 +268,8 @@ function accountMaskedNumber(a){
 function accountCard(a,mode="dashboard"){
   const goalCount=data.goals.filter(g=>g.accountId===a.id).length;
   const included=a.includeInTotal!==false;
-  return `<div class="card wallet-account-card ${mode==="dashboard"?"dashboard-account-card":""}">
+  return `<div class="card wallet-account-card account-tone-${accountTone(a)} ${mode==="dashboard"?"dashboard-account-card":""}">
+    <div class="account-card-stack" aria-hidden="true"><span></span><span></span><span></span></div>
     <div class="wallet-card-orbit"></div>
     <div class="wallet-card-top">
       <div class="account-brand">${accountVisual(a)}<div><strong>${esc(a.name)}</strong><small>${accountTypeLabel(a.type)}</small></div></div>
@@ -407,8 +421,10 @@ function miniSparkline(values,tone="green"){
 }
 function moneyFlowSvg(savingValues,expenseValues,labels,tooltipValue){
   const w=660,h=230,padL=48,padR=20,padT=26,padB=46;
-  const visualA=savingValues.some(v=>v>0||v<0)?savingValues:[1800,1950,2200,1150,1750,1600,2350];
-  const visualB=expenseValues.some(v=>v>0||v<0)?expenseValues:[1450,1580,1700,1400,1850,2050,1900];
+  const hasSavingData=savingValues.some(v=>v>0||v<0);
+  const hasExpenseData=expenseValues.some(v=>v>0||v<0);
+  const visualA=hasSavingData?savingValues:[1800,1950,2200,1150,1750,1600,2350];
+  const visualB=hasExpenseData?expenseValues:[1450,1580,1700,1400,1850,2050,1900];
   const all=[...visualA,...visualB,3000];
   const max=Math.max(1,...all), min=Math.min(0,...all);
   const scale=(v)=>padT+(max-v)/(max-min || 1)*(h-padT-padB);
@@ -427,6 +443,7 @@ function moneyFlowSvg(savingValues,expenseValues,labels,tooltipValue){
   const tx=xFor(tooltipIndex), ty=scale(visualA[tooltipIndex]);
   const axis=[3000,2000,1000,0].map(v=>`<text x="4" y="${scale(v)+4}" class="flow-axis">${money(v).replace(".00","")}</text><line x1="${padL}" x2="${w-padR}" y1="${scale(v)}" y2="${scale(v)}" class="flow-grid"/>`).join("");
   const labelEls=visualA.map((_,i)=>`<text x="${xFor(i)}" y="${h-16}" text-anchor="middle" class="flow-label">${esc(labels[i]||"")}</text>`).join("");
+  const expenseValueEls=hasExpenseData?visualB.map((v,i)=>`<text x="${xFor(i)}" y="${Math.min(h-padB-10,Math.max(16,scale(v)+18))}" text-anchor="middle" class="flow-expense-value">${esc(money(v).replace(".00",""))}</text>`).join(""):"";
   return `<svg class="money-flow-svg" viewBox="0 0 ${w} ${h}" aria-label="Money flow chart" role="img">
     ${axis}
     <path class="flow-line expense-line" d="${pathFor(visualB)}"></path>
@@ -438,15 +455,13 @@ function moneyFlowSvg(savingValues,expenseValues,labels,tooltipValue){
       <text x="39" y="16" text-anchor="middle">${money(tooltipValue || visualA[tooltipIndex]).replace(".00","")}</text>
       <text x="39" y="29" text-anchor="middle">Top flow</text>
     </g>
+    ${expenseValueEls}
     ${labelEls}
   </svg>`;
 }
 
 function moneyParts(value){
-  const formatted=money(value);
-  const match=formatted.match(/^(.+?)(\.\d{2})$/);
-  if(!match)return `<span class="amount-main">${esc(formatted)}</span>`;
-  return `<span class="amount-main">${esc(match[1])}</span><span class="amount-decimal">${esc(match[2])}</span>`;
+  return `<span class="amount-main">${esc(money(value))}</span>`;
 }
 
 function metric(title,value,note,values=[],opts={}){
@@ -583,9 +598,9 @@ function transactionRow(t){
 }
 
 function accounts(){
-  return `<div class="section-row page-head"><div><div class="eyebrow">🏦 MONEY HUB</div><h2>Your Accounts</h2><p class="muted">Keep every bank, wallet and card in one clean view.</p></div><button class="primary" data-action="add-account">+ Add Account</button></div>
+  return `<div class="section-row page-head"><div><div class="eyebrow">🏦 MONEY HUB</div><h2>Your Accounts</h2><p class="muted">Keep every bank, wallet and card in one clean view.</p></div></div>
   <div class="account-summary-row"><div class="summary-pill"><span>💰</span><div><small>Total Money</small><strong>${money(totalBalance())}</strong><em>Included accounts</em></div></div><div class="summary-pill"><span>🚫</span><div><small>Excluded</small><strong>${money(excludedBalance())}</strong><em>Cards / other excluded</em></div></div><div class="summary-pill"><span>🏦</span><div><small>Accounts</small><strong>${data.accounts.length}</strong><em>${data.accounts.filter(a=>a.includeInTotal!==false).length} included</em></div></div></div>
-  <div class="accounts-modern-grid wallet-card-grid">${data.accounts.map(a=>accountCard(a,"full")).join("")||'<div class="card empty">No accounts yet. Add your first account.</div>'}</div>`;
+  <div class="accounts-modern-grid wallet-card-grid"><button class="account-add-card" data-action="add-account" aria-label="Add account"><span>+</span><strong>Add account</strong><small>Bank, wallet or card</small></button>${data.accounts.map(a=>accountCard(a,"full")).join("")}</div>`;
 }
 
 function transactions(){
@@ -593,6 +608,26 @@ function transactions(){
   const list=[...data.transactions].sort((a,b)=>txDateTime(b).localeCompare(txDateTime(a))).filter(t=>`${t.category} ${t.note} ${t.accountName} ${t.toAccountName}`.toLowerCase().includes(q));
   return `<div class="section-row page-head"><div><h2>Transactions</h2><p class="muted">${list.length} transaction${list.length===1?"":"s"}</p></div><button class="primary" data-action="add-transaction">+ Add Transaction</button></div>
   <div class="card">${list.map(t=>`<div class="transaction-full">${transactionRow(t)}<div class="row-actions"><button class="secondary ghost" data-edit-tx="${t.id}">Edit</button><button class="danger ghost" data-delete-tx="${t.id}">Delete</button></div></div>`).join("")||'<div class="empty">No transactions found.</div>'}</div>`;
+}
+
+function openCategoryTransactions(category){
+  const monthStart=dateKey(new Date(new Date().getFullYear(),new Date().getMonth(),1));
+  const from=analyticsFrom||monthStart,to=analyticsTo||today();
+  const list=data.transactions
+    .filter(t=>t.type==="expense"&&(t.category||"Other")===category&&t.date>=from&&t.date<=to)
+    .sort((a,b)=>txDateTime(b).localeCompare(txDateTime(a)));
+  const total=list.reduce((s,t)=>s+Number(t.amount||0),0);
+  modal(`${categoryEmoji(category)} ${category}`,`<div class="category-drill-modal">
+    <div class="category-drill-summary">
+      <div><small>Total spent</small><strong>${money(total)}</strong></div>
+      <div><small>Transactions</small><strong>${list.length}</strong></div>
+      <div><small>Period</small><strong>${esc(from)} to ${esc(to)}</strong></div>
+    </div>
+    <div class="category-drill-list">
+      ${list.map(t=>`<div class="transaction-full">${transactionRow(t)}<div class="row-actions"><button class="secondary ghost" data-edit-tx="${t.id}">Edit</button><button class="danger ghost" data-delete-tx="${t.id}">Delete</button></div></div>`).join("")||'<div class="empty">No transactions found for this category.</div>'}
+    </div>
+  </div>`);
+  bindPageActions();
 }
 
 function analytics(){
@@ -737,7 +772,7 @@ function analytics(){
   <div class="grid2 spaced">
     <div class="card">
       <div class="section-row"><div><h2>${icon("pie-chart",18)} Where You Spend</h2><small class="muted">Expense breakdown by category</small></div></div>
-      <div class="rank-list">${topCats.slice(0,8).map(([c,v],i)=>`<div class="rank-row"><div class="rank-label"><b>${i+1}</b><span>${categoryLabel(c)}</span><strong>${money(v)}</strong></div><div class="rank-track"><i style="width:${v/maxCat*100}%"></i></div></div>`).join("")||'<div class="empty">No expenses in this period.</div>'}</div>
+      <div class="rank-list">${topCats.slice(0,8).map(([c,v],i)=>`<button type="button" class="rank-row category-drill-trigger" data-category-drill="${esc(encodeURIComponent(c))}"><div class="rank-label"><b>${i+1}</b><span>${categoryLabel(c)}</span><strong>${money(v)}</strong></div><div class="rank-track"><i style="width:${v/maxCat*100}%"></i></div><small>Tap to view transactions</small></button>`).join("")||'<div class="empty">No expenses in this period.</div>'}</div>
     </div>
     <div class="card">
       <div class="section-row"><div><h2>${icon("wallet-cards",18)} Cash Flow by Account</h2><small class="muted">Net movement in selected period</small></div></div>
@@ -1072,6 +1107,7 @@ function bindPageActions(){
   document.querySelectorAll("[data-edit-goal]").forEach(b=>b.onclick=()=>editGoal(b.dataset.editGoal));
   document.querySelectorAll("[data-edit-emi]").forEach(b=>b.onclick=()=>editEmi(b.dataset.editEmi));
   document.querySelectorAll("[data-edit-tx]").forEach(b=>b.onclick=()=>editTransaction(b.dataset.editTx));
+  document.querySelectorAll("[data-category-drill]").forEach(b=>b.onclick=()=>openCategoryTransactions(decodeURIComponent(b.dataset.categoryDrill||"Other")));
 }
 
 function actions(a){
@@ -1084,12 +1120,120 @@ function actions(a){
   if(a==="add-emi") openEmi();
   if(a==="add-loan") openLoan();
   if(a==="dismiss-tip"){ const el=document.querySelector(".tip-bar"); if(el) el.remove(); }
+  if(a==="local-info") openLocalInfo();
+  if(a==="google-login") openGoogleLogin();
+  if(a==="google-logout") logoutGoogle();
   if(a==="export") exportBackup();
   if(a==="clear" && confirm("Clear all local MoneyPilot data?")){localStorage.removeItem(KEY);data=load();render();toast("Local data cleared.");}
 }
 
 function modal(title,body){$("modalTitle").textContent=title;$("modalBody").innerHTML=body;$("modal").classList.remove("hidden");refreshIcons();}
 function closeModal(){$("modal").classList.add("hidden")}
+function openLocalInfo(){
+  modal("Account sync",`<div class="local-sync-info">
+    <div class="local-sync-icon">L</div>
+    <h3>${currentUser?"Google account connected":"Local data mode is active"}</h3>
+    <p>${currentUser?`Signed in as ${esc(currentUser.displayName||currentUser.email||"Google user")}.`:"Your data is still saved in this browser until you choose Google login."}</p>
+    <div class="account-modal-actions">
+      ${currentUser?'<button class="danger full" type="button" data-action="google-logout">Sign out</button>':'<button class="primary full google-modal-login" type="button" data-action="google-login"><span>G</span> Login with Google</button>'}
+      <button class="secondary full" type="button" onclick="document.getElementById('modal').classList.add('hidden')">Close</button>
+    </div>
+  </div>`);
+}
+
+function loadAuthApi(){
+  if(!authApiPromise) authApiPromise=import("./auth.js");
+  return authApiPromise;
+}
+function applySignedOutProfile(){
+  if($("userName")) $("userName").textContent="Login";
+  if($("avatar")) $("avatar").textContent="G";
+  if($("avatarImg")) $("avatarImg").hidden=true;
+  if($("topLocalBtn")){
+    $("topLocalBtn").title="Login with Google";
+    $("topLocalBtn").disabled=false;
+    $("topLocalBtn").classList.add("google-login-pill");
+    $("topLocalBtn").onclick=openGoogleLogin;
+  }
+  if($("sideLocalBtn")){
+    $("sideLocalBtn").textContent="Login with Google";
+    $("sideLocalBtn").disabled=false;
+    $("sideLocalBtn").classList.add("google-login-btn");
+    $("sideLocalBtn").onclick=openGoogleLogin;
+  }
+  if($("sideUserName")) $("sideUserName").textContent="Guest";
+  if($("sideUserEmail")) $("sideUserEmail").textContent="Stored in this browser";
+  if($("sideAvatarText")) $("sideAvatarText").textContent="G";
+  if($("sideAvatarImg")) $("sideAvatarImg").hidden=true;
+}
+function applySignedInProfile(user){
+  const name=user?.displayName||user?.email||"Google user";
+  const email=user?.email||"Google account connected";
+  const photo=user?.photoURL||"";
+  if($("userName")) $("userName").textContent=name.split(" ")[0]||"Account";
+  if($("avatar")) $("avatar").textContent=(name[0]||"G").toUpperCase();
+  if($("avatarImg")){ $("avatarImg").src=photo; $("avatarImg").hidden=!photo; }
+  if($("topLocalBtn")){
+    $("topLocalBtn").title=`Signed in as ${name}`;
+    $("topLocalBtn").disabled=false;
+    $("topLocalBtn").onclick=openLocalInfo;
+  }
+  if($("sideLocalBtn")){
+    $("sideLocalBtn").textContent="Sign out";
+    $("sideLocalBtn").disabled=false;
+    $("sideLocalBtn").onclick=logoutGoogle;
+  }
+  if($("sideUserName")) $("sideUserName").textContent=name;
+  if($("sideUserEmail")) $("sideUserEmail").textContent=email;
+  if($("sideAvatarText")) $("sideAvatarText").textContent=(name[0]||"G").toUpperCase();
+  if($("sideAvatarImg")){ $("sideAvatarImg").src=photo; $("sideAvatarImg").hidden=!photo; }
+}
+async function openGoogleLogin(){
+  try{
+    const auth=await loadAuthApi();
+    const result=await auth.login();
+    currentUser=result?.user||currentUser;
+    if(currentUser) applySignedInProfile(currentUser);
+    closeModal();
+    toast("Google account connected.");
+  }catch(err){
+    console.error("Google login failed:",err);
+    modal("Google login",`<div class="local-sync-info">
+      <div class="local-sync-icon">G</div>
+      <h3>Google login could not start</h3>
+      <p>Firebase is connected, but Google login may need this domain added in Firebase Authentication authorized domains.</p>
+      <p class="muted">${esc(err?.message||"Check your Firebase Authentication settings, then refresh and try again.")}</p>
+      <button class="primary full" type="button" onclick="document.getElementById('modal').classList.add('hidden')">Got it</button>
+    </div>`);
+  }
+}
+async function logoutGoogle(){
+  try{
+    const auth=await loadAuthApi();
+    await auth.logout();
+    currentUser=null;
+    applySignedOutProfile();
+    closeModal();
+    toast("Signed out.");
+  }catch(err){
+    console.error("Google logout failed:",err);
+    toast("Could not sign out. Try refreshing.");
+  }
+}
+function initializeAuth(){
+  loadAuthApi().then(auth=>{
+    if(typeof auth.watchAuth==="function"){
+      auth.watchAuth(user=>{
+        currentUser=user||null;
+        if(currentUser) applySignedInProfile(currentUser);
+        else applySignedOutProfile();
+      });
+    }
+  }).catch(err=>{
+    console.warn("Firebase auth is not available:",err);
+    applySignedOutProfile();
+  });
+}
 
 function openTransaction(){
   const transactionCategories=[...new Set([...(data.categories||[]),"Bills & Utilities","Savings & Goals"])];
@@ -1614,16 +1758,10 @@ $("searchInput").oninput=()=>{if(currentPage==="transactions")render()};
 setLocalProfile();
 applyTheme();
 function setLocalProfile(){
-  const name="Local";
-  if($("userName")) $("userName").textContent="Local";
-  if($("avatar")) $("avatar").textContent="L";
-  if($("topLocalBtn")) { $("topLocalBtn").title="Local data mode"; $("topLocalBtn").disabled=true; }
-  if($("sideLocalBtn")) { $("sideLocalBtn").textContent="Local data only"; $("sideLocalBtn").disabled=true; }
-  if($("sideUserName")) $("sideUserName").textContent="Local data";
-  if($("sideUserEmail")) $("sideUserEmail").textContent="Stored in this browser";
-  if($("sideAvatarText")) $("sideAvatarText").textContent="L";
+  applySignedOutProfile();
   if($("todayLabel")) $("todayLabel").textContent=new Intl.DateTimeFormat("en-IN",{day:"numeric",month:"short",year:"numeric",weekday:"short"}).format(new Date());
 }
+initializeAuth();
 render();
 
 window.addEventListener("DOMContentLoaded",()=>setTimeout(refreshIcons,50));

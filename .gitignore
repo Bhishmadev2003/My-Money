@@ -1,0 +1,19 @@
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local Firebase / debug files
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# Node files (if tooling is added later)
+node_modules/
+
+# Local environment files
+.env
+.env.*
+!.env.example

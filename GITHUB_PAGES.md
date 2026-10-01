@@ -1,21 +1,15 @@
-# My Money — GitHub Pages
+# Quick Publish Instructions
 
-## Deploy
-1. Upload the contents of this folder to the root of your GitHub repository.
-2. In GitHub: **Settings → Pages**.
-3. Under **Build and deployment**, choose **Deploy from a branch**.
-4. Select your main branch and `/ (root)`, then Save.
-5. Open the generated `https://<username>.github.io/<repository>/` URL.
+## Existing GitHub repository
 
-## Firebase
-For Google Sign-In on GitHub Pages, add your GitHub Pages domain to:
-Firebase Console → Authentication → Settings → Authorized domains.
+Upload/replace the repository contents with all files from this package and commit to `main`.
 
-For example:
-`bhishmadev2003.github.io`
+Then go to:
 
-Do not commit Firebase service-account private keys, Gemini Developer API keys, or App Check debug tokens.
+**Settings → Pages → Build and deployment → Source → GitHub Actions**
 
+The **Deploy MoneyPilot to GitHub Pages** workflow will run after the next commit.
 
-### EMI date behavior (V37)
-The next EMI date is derived from EMI-payment transaction dates. Editing or deleting an EMI payment moves the paid/unpaid cycle accordingly.
+## Google Sign-In note
+
+For Firebase Google login, add `YOUR-USERNAME.github.io` under Firebase Authentication → Settings → Authorized domains.

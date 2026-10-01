@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./style.css">
+<link rel="stylesheet" href="./styles.css">
 <script src="https://cdn.jsdelivr.net/npm/lucide@0.468.0/dist/umd/lucide.min.js"></script>
 </head>
 <body>
@@ -31,7 +31,7 @@
     <div class="profile-avatar"><img id="sideAvatarImg" alt="" hidden><span id="sideAvatarText">G</span></div>
     <div class="profile-copy"><strong id="sideUserName">Guest</strong><small id="sideUserEmail">Stored in this browser</small></div>
   </div>
-  <button id="sideLocalBtn" class="profile-btn" disabled>Local data only</button>
+  <button id="sideLocalBtn" class="profile-btn google-login-btn">Login with Google</button>
 </aside>
 
 <main class="main">
@@ -45,7 +45,7 @@
     <label class="search">⌕<input id="searchInput" placeholder="Search transactions..."></label>
     <div class="top-date"><span id="todayLabel">Today</span><span class="calendar-dot">▣</span></div>
     <button class="icon-btn top-bell" aria-label="Notifications">♧</button>
-    <button id="topLocalBtn" class="user-pill"><span class="avatar"><img id="avatarImg" alt="" hidden><span id="avatar">L</span></span><span id="userName">Local</span></button>
+    <button id="topLocalBtn" class="user-pill google-login-pill"><span class="avatar"><img id="avatarImg" alt="" hidden><span id="avatar">G</span></span><span id="userName">Login</span></button>
   </div>
 </header>
 <section id="content" class="content"></section>
