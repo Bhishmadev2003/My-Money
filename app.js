@@ -188,11 +188,13 @@ async function syncSignedInUser(user){
     return;
   }
   const uid = user.uid;
+  let syncStage = "initialize Firebase";
   cloudReadyForUid = null;
   try{
     const auth = await loadAuthApi();
     // Sync private financial data first. A shared-category catalog problem must
     // never prevent the user's own accounts and transactions from syncing.
+    syncStage = "read private user document users/" + uid;
     const cloudRecord = await auth.readUserData(uid);
     if(currentUser?.uid !== uid) return;
 
@@ -230,6 +232,7 @@ async function syncSignedInUser(user){
 
     syncAutoGoalDeposits();
     localStorage.setItem(KEY, JSON.stringify(data));
+    syncStage = "write private user document users/" + uid;
     await auth.writeUserData(uid, data);
     if(currentUser?.uid !== uid) return;
     cloudReadyForUid = uid;
@@ -265,10 +268,10 @@ async function syncSignedInUser(user){
       toast("Your data synced to cloud, but shared categories failed. Check Firestore rules.");
     }
   }catch(err){
-    console.error("Firestore sync failed:", err);
+    console.error("Firestore sync failed at stage: " + syncStage, err);
     cloudReadyForUid = null;
     const code = err?.code ? ` (${err.code})` : "";
-    toast(`Google login works, but cloud data sync failed${code}. Check Firestore setup.`);
+    toast(`Cloud sync failed during ${syncStage}${code}. See Console for details.`);
   }
 }
 function uid(p="id"){ return p+"_"+Date.now()+"_"+Math.random().toString(36).slice(2,7); }

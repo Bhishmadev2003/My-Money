@@ -1,13 +1,12 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Each user's financial records remain private to that user.
+    // Private financial data. Each user can access only their own root document.
     match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Shared app-wide category catalog. Signed-in users can read and merge
-    // category names; this document must never contain personal financial data.
+    // Shared category names only; never store financial records in this document.
     match /sharedSettings/categoryCatalog {
       allow read, write: if request.auth != null;
     }

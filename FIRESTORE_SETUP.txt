@@ -1,0 +1,39 @@
+MY MONEY - FIRESTORE SETUP
+
+The project uses Firebase project ID: my-money-3d05e
+
+IMPORTANT: replacing the website files does NOT publish Firestore rules. Rules must be published separately.
+
+Option A - Firebase Console (recommended):
+1. Open https://console.firebase.google.com/project/my-money-3d05e/firestore
+2. Select the Firestore Database page, then open Rules.
+3. Copy the complete contents of firestore.rules from this project.
+4. Click Publish.
+5. Confirm the selected project is my-money-3d05e.
+
+Option B - Firebase CLI:
+1. Install Node.js if needed.
+2. Install Firebase CLI: npm install -g firebase-tools
+3. Open a terminal in this project folder.
+4. Run: firebase login
+5. Run: firebase use --add
+6. Select my-money-3d05e and set an alias (for example: default).
+7. Run: firebase deploy --only firestore:rules
+
+Firebase Console checks:
+- Authentication > Sign-in method: Google enabled.
+- Authentication > Settings > Authorized domains: bhishmadev2003.github.io is listed.
+- Firestore Database exists in project my-money-3d05e.
+
+After publishing rules:
+1. Push all website files to GitHub Pages.
+2. Open https://bhishmadev2003.github.io/My-Money/
+3. Sign out and sign in again, then refresh.
+4. If it still fails, open F12 > Console and read the line beginning:
+   "Firestore sync failed at stage: ..."
+   The stage tells whether the denied operation was a user document read/write.
+
+Privacy note:
+- /users/{uid} is private to the matching authenticated UID.
+- /sharedSettings/categoryCatalog is readable/writable by authenticated users and must contain category names only.
+- Do not use public rules such as allow read, write: if true.
