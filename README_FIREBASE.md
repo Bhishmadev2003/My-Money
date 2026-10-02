@@ -87,3 +87,15 @@ Removed the recursive MutationObserver used for Lucide icons. The observer was w
 
 ## V26 AI model update
 Firebase AI Logic now uses `gemini-3.6-flash` instead of the retired/deprecated `gemini-2.5-flash` model.
+
+## Cloud sync fix (October 2026)
+The app now reads and writes each signed-in user's data in Firestore at `users/{uid}`.
+
+1. In Firebase Console, open **Build → Firestore Database** and create the database if it does not exist.
+2. Open **Authentication → Sign-in method** and enable **Google**.
+3. Under **Authentication → Settings → Authorized domains**, add your GitHub Pages domain (for example, `yourname.github.io`) and any custom domain you use.
+4. Open **Firestore Database → Rules**, publish the included `firestore.rules` rules.
+5. Deploy the updated files and open the site over HTTPS.
+6. Sign in with Google. If this Google account already has cloud data, that cloud data loads. On first sign-in, the current browser's local data is uploaded to the account.
+
+A successful save should show **“Saved and synced to your Google account.”** If it says cloud sync failed, open the browser developer console and check the Firebase error. Data continues to be stored locally as a fallback. Local browser data is not automatically merged into an account that already has cloud data, so export a backup first if you need to preserve data from multiple devices.

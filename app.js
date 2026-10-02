@@ -4,6 +4,9 @@ const DATA_PRESET_VERSION = 3;
 let dashboardWeekOffset = 0;
 let authApiPromise = null;
 let currentUser = null;
+let cloudReadyForUid = null;
+let cloudSaveTimer = null;
+let saveRevision = 0;
 const UNIVERSAL_CATEGORIES = [
   "Food & Dining",
   "Groceries",
@@ -151,7 +154,57 @@ function normalizePresetList(existing, universal, legacy, version){
 function save(){
   syncAutoGoalDeposits();
   localStorage.setItem(KEY, JSON.stringify(data));
-  toast("Saved locally.");
+  saveRevision++;
+  if(currentUser && cloudReadyForUid === currentUser.uid){
+    if(cloudSaveTimer) clearTimeout(cloudSaveTimer);
+    const uid = currentUser.uid;
+    const revision = saveRevision;
+    cloudSaveTimer = setTimeout(async ()=>{
+      try{
+        const auth = await loadAuthApi();
+        await auth.writeUserData(uid, data);
+        if(currentUser?.uid === uid && revision === saveRevision) toast("Saved and synced to your Google account.");
+      }catch(err){
+        console.error("Firestore save failed:", err);
+        toast("Saved on this device; cloud sync failed. Check Firebase settings.");
+      }
+    }, 350);
+  }else{
+    toast("Saved on this device. Sign in to sync across devices.");
+  }
+}
+
+async function syncSignedInUser(user){
+  if(!user) {
+    cloudReadyForUid = null;
+    return;
+  }
+  const uid = user.uid;
+  cloudReadyForUid = null;
+  try{
+    const auth = await loadAuthApi();
+    const cloudRecord = await auth.readUserData(uid);
+    if(currentUser?.uid !== uid) return;
+    if(cloudRecord && cloudRecord.data && typeof cloudRecord.data === "object"){
+      // Cloud is the source of truth when this account already has saved data.
+      data = { ...structuredClone(defaultData), ...cloudRecord.data };
+      syncAutoGoalDeposits();
+      localStorage.setItem(KEY, JSON.stringify(data));
+      render();
+      cloudReadyForUid = uid;
+      toast("Your data is synced from the cloud.");
+    }else{
+      // First sign-in: migrate this browser's existing data to Firestore.
+      await auth.writeUserData(uid, data);
+      if(currentUser?.uid !== uid) return;
+      cloudReadyForUid = uid;
+      toast("Your existing data is now backed up to the cloud.");
+    }
+  }catch(err){
+    console.error("Firestore sync failed:", err);
+    cloudReadyForUid = null;
+    toast("Google login works, but cloud sync failed. Check Firestore rules and setup.");
+  }
 }
 function uid(p="id"){ return p+"_"+Date.now()+"_"+Math.random().toString(36).slice(2,7); }
 function toast(msg){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),2200); }
@@ -1193,9 +1246,11 @@ async function openGoogleLogin(){
     const auth=await loadAuthApi();
     const result=await auth.login();
     currentUser=result?.user||currentUser;
-    if(currentUser) applySignedInProfile(currentUser);
+    if(currentUser){
+      applySignedInProfile(currentUser);
+      await syncSignedInUser(currentUser);
+    }
     closeModal();
-    toast("Google account connected.");
   }catch(err){
     console.error("Google login failed:",err);
     modal("Google login",`<div class="local-sync-info">
@@ -1212,6 +1267,8 @@ async function logoutGoogle(){
     const auth=await loadAuthApi();
     await auth.logout();
     currentUser=null;
+    cloudReadyForUid=null;
+    if(cloudSaveTimer) clearTimeout(cloudSaveTimer);
     applySignedOutProfile();
     closeModal();
     toast("Signed out.");
@@ -1225,8 +1282,13 @@ function initializeAuth(){
     if(typeof auth.watchAuth==="function"){
       auth.watchAuth(user=>{
         currentUser=user||null;
-        if(currentUser) applySignedInProfile(currentUser);
-        else applySignedOutProfile();
+        if(currentUser){
+          applySignedInProfile(currentUser);
+          syncSignedInUser(currentUser);
+        }else{
+          cloudReadyForUid = null;
+          applySignedOutProfile();
+        }
       });
     }
   }).catch(err=>{
