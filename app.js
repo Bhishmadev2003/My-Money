@@ -144,12 +144,20 @@ function load(){
 }
 function normalizePresetList(existing, universal, legacy, version){
   const clean=[...new Set((Array.isArray(existing)?existing:[]).map(x=>String(x||"").trim()).filter(Boolean))];
-  if(!clean.length) return {list:[...universal], migrated:version!==DATA_PRESET_VERSION};
-  if(version===DATA_PRESET_VERSION) return {list:clean, migrated:false};
+  // Always inject the full built-in catalog, even when localStorage already has
+  // the current preset version but was created before these defaults were added.
+  // Preserve every user-created category and avoid duplicates case-insensitively.
+  const universalByLower=new Set(universal.map(x=>x.toLowerCase()));
   const legacySet=new Set(legacy.map(x=>x.toLowerCase()));
-  const universalSet=new Set(universal.map(x=>x.toLowerCase()));
-  const custom=clean.filter(x=>!legacySet.has(x.toLowerCase()) && !universalSet.has(x.toLowerCase()));
-  return {list:[...universal,...custom], migrated:true};
+  const custom=clean.filter(x=>!universalByLower.has(x.toLowerCase()) && !legacySet.has(x.toLowerCase()));
+  const merged=[...universal];
+  const seen=new Set(merged.map(x=>x.toLowerCase()));
+  for(const item of [...clean.filter(x=>universalByLower.has(x.toLowerCase())), ...custom]){
+    const key=item.toLowerCase();
+    if(!seen.has(key)){ merged.push(item); seen.add(key); }
+  }
+  const same=clean.length===merged.length && clean.every((x,i)=>x===merged[i]);
+  return {list:merged, migrated:version!==DATA_PRESET_VERSION || !same};
 }
 function save(){
   syncAutoGoalDeposits();
