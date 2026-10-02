@@ -104,3 +104,19 @@ A successful save should show **“Saved and synced to your Google account.”**
 ## Shared categories across users
 
 The app includes a built-in universal category list for every user. When a user signs in with Google, the app also merges their existing local/account categories into the shared Firestore document `sharedSettings/categoryCatalog`. Newly added categories are published to that shared catalog and become available to other signed-in users. User transactions, accounts, budgets, loans, goals, and other financial records remain in the private `users/{uid}` document. Publish the included `firestore.rules` to enable the shared catalog.
+
+## Cloud sync troubleshooting (October 2026 update)
+
+The app now syncs private financial data first, then syncs the shared category catalog separately. A shared-catalog permission error should no longer block personal cloud backups.
+
+### Verify Firebase setup
+1. In Firebase Console, select project **my-money-3d05e** (the project ID in `auth.js`).
+2. Open **Build → Firestore Database**. If no database exists, create the default database in production mode.
+3. In **Firestore Database → Rules**, publish the exact contents of `firestore.rules` in this repository.
+4. In **Authentication → Settings → Authorized domains**, add the exact host used by the deployed site (for GitHub Pages, usually `OWNER.github.io`, without `https://` or a path).
+5. In **Authentication → Sign-in method**, confirm Google is enabled.
+6. Open the deployed website over HTTPS, sign in, and add a harmless test transaction. Confirm Firestore shows a document at `users/<your-auth-uid>`.
+7. To enable shared categories, confirm the document `sharedSettings/categoryCatalog` can be created/read. This catalog contains category names only; personal records remain in `users/<uid>`.
+
+### If it still fails
+Open the browser Developer Tools (**F12 → Console**) and look for `Firestore sync failed:` or `Shared category sync failed:`. The error code is included in the console output and in the app's warning toast. Common causes include `permission-denied` (rules not published or wrong project), `unavailable` (network/service issue), and `not-found` (Firestore database has not been created or the app is pointed at the wrong project). Do not make Firestore rules public to fix this.

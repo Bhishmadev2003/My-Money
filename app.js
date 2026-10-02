@@ -191,33 +191,19 @@ async function syncSignedInUser(user){
   cloudReadyForUid = null;
   try{
     const auth = await loadAuthApi();
+    // Sync private financial data first. A shared-category catalog problem must
+    // never prevent the user's own accounts and transactions from syncing.
     const cloudRecord = await auth.readUserData(uid);
     if(currentUser?.uid !== uid) return;
-    const localDataForShared = load();
-    const cloudCategoriesForShared = cloudRecord && cloudRecord.data && Array.isArray(cloudRecord.data.categories)
-      ? cloudRecord.data.categories : [];
-    const sharedCategories = await auth.mergeSharedCategories([
-      ...UNIVERSAL_CATEGORIES,
-      ...(Array.isArray(localDataForShared.categories) ? localDataForShared.categories : []),
-      ...cloudCategoriesForShared
-    ]);
-    if(currentUser?.uid !== uid) return;
-    data.categories = [...new Set([
-      ...UNIVERSAL_CATEGORIES,
-      ...(Array.isArray(sharedCategories) ? sharedCategories : []),
-      ...(Array.isArray(data.categories) ? data.categories : [])
-    ])];
-    localStorage.setItem(KEY, JSON.stringify(data));
+
+    const localData = load();
     if(cloudRecord && cloudRecord.data && typeof cloudRecord.data === "object"){
-      // Cloud remains the source of truth for financial records, but categories and
-      // account types are merged so presets and custom entries from this device
-      // are not lost when signing in on a new/previously-used account.
-      const localData = load();
+      // Cloud remains the source of truth for financial records. Merge local and
+      // cloud category/account-type lists so built-ins and custom lists survive.
       const cloudData = cloudRecord.data;
       const mergedData = { ...structuredClone(defaultData), ...cloudData };
       mergedData.categories = [...new Set([
         ...UNIVERSAL_CATEGORIES,
-        ...(Array.isArray(sharedCategories) ? sharedCategories : []),
         ...(Array.isArray(localData.categories) ? localData.categories : []),
         ...(Array.isArray(cloudData.categories) ? cloudData.categories : [])
       ].map(x => String(x || "").trim()).filter(Boolean))];
@@ -228,25 +214,61 @@ async function syncSignedInUser(user){
       ].map(x => String(x || "").trim()).filter(Boolean))];
       mergedData.presetVersion = DATA_PRESET_VERSION;
       data = mergedData;
-      syncAutoGoalDeposits();
+    } else {
+      // First sign-in: migrate this browser's existing data to the user's cloud.
+      data = { ...structuredClone(defaultData), ...localData };
+      data.categories = [...new Set([
+        ...UNIVERSAL_CATEGORIES,
+        ...(Array.isArray(localData.categories) ? localData.categories : [])
+      ].map(x => String(x || "").trim()).filter(Boolean))];
+      data.accountTypes = [...new Set([
+        ...UNIVERSAL_ACCOUNT_TYPES,
+        ...(Array.isArray(localData.accountTypes) ? localData.accountTypes : [])
+      ].map(x => String(x || "").trim()).filter(Boolean))];
+      data.presetVersion = DATA_PRESET_VERSION;
+    }
+
+    syncAutoGoalDeposits();
+    localStorage.setItem(KEY, JSON.stringify(data));
+    await auth.writeUserData(uid, data);
+    if(currentUser?.uid !== uid) return;
+    cloudReadyForUid = uid;
+    render();
+
+    // Shared categories are an optional, separate sync. Failure here should not
+    // turn a successful personal-data sync into a cloud-sync failure.
+    let sharedCategoriesAvailable = false;
+    try{
+      const sharedCategories = await auth.mergeSharedCategories([
+        ...UNIVERSAL_CATEGORIES,
+        ...(Array.isArray(data.categories) ? data.categories : [])
+      ]);
+      if(currentUser?.uid !== uid) return;
+      data.categories = [...new Set([
+        ...UNIVERSAL_CATEGORIES,
+        ...(Array.isArray(sharedCategories) ? sharedCategories : []),
+        ...(Array.isArray(data.categories) ? data.categories : [])
+      ].map(x => String(x || "").trim()).filter(Boolean))];
       localStorage.setItem(KEY, JSON.stringify(data));
-      // Write the merged category/account-type lists back so they exist in Firestore too.
       await auth.writeUserData(uid, data);
       if(currentUser?.uid !== uid) return;
+      sharedCategoriesAvailable = true;
       render();
-      cloudReadyForUid = uid;
+    }catch(sharedErr){
+      console.error("Shared category sync failed:", sharedErr);
+      // Keep personal sync marked successful; show a targeted setup warning below.
+    }
+
+    if(sharedCategoriesAvailable){
       toast("Your data synced. Shared categories are available to everyone.");
     }else{
-      // First sign-in: migrate this browser's existing data to Firestore.
-      await auth.writeUserData(uid, data);
-      if(currentUser?.uid !== uid) return;
-      cloudReadyForUid = uid;
-      toast("Your existing data is now backed up to the cloud.");
+      toast("Your data synced to cloud, but shared categories failed. Check Firestore rules.");
     }
   }catch(err){
     console.error("Firestore sync failed:", err);
     cloudReadyForUid = null;
-    toast("Google login works, but cloud sync failed. Check Firestore rules and setup.");
+    const code = err?.code ? ` (${err.code})` : "";
+    toast(`Google login works, but cloud data sync failed${code}. Check Firestore setup.`);
   }
 }
 function uid(p="id"){ return p+"_"+Date.now()+"_"+Math.random().toString(36).slice(2,7); }
