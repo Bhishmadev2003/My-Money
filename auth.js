@@ -13,7 +13,8 @@ import {
   doc,
   getDoc,
   setDoc,
-  serverTimestamp
+  serverTimestamp,
+  runTransaction
 } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -40,6 +41,27 @@ export async function writeUserData(uid, data) {
     data,
     updatedAt: serverTimestamp()
   }, { merge: true });
+}
+
+// Shared category catalog: categories added by one signed-in user become
+// available to all other signed-in users of the app. Financial records remain private.
+const sharedCategoryDoc = doc(db, "sharedSettings", "categoryCatalog");
+export async function readSharedCategories() {
+  const snapshot = await getDoc(sharedCategoryDoc);
+  const categories = snapshot.exists() ? snapshot.data().categories : [];
+  return Array.isArray(categories) ? categories : [];
+}
+export async function mergeSharedCategories(categories) {
+  const clean = [...new Set((Array.isArray(categories) ? categories : [])
+    .map(value => String(value || "").trim()).filter(Boolean))];
+  await runTransaction(db, async transaction => {
+    const snapshot = await transaction.get(sharedCategoryDoc);
+    const existing = snapshot.exists() && Array.isArray(snapshot.data().categories)
+      ? snapshot.data().categories : [];
+    const merged = [...new Set([...existing, ...clean].map(value => String(value || "").trim()).filter(Boolean))];
+    transaction.set(sharedCategoryDoc, { categories: merged, updatedAt: serverTimestamp() }, { merge: true });
+  });
+  return readSharedCategories();
 }
 
 const auth = getAuth(app);

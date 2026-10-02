@@ -185,14 +185,49 @@ async function syncSignedInUser(user){
     const auth = await loadAuthApi();
     const cloudRecord = await auth.readUserData(uid);
     if(currentUser?.uid !== uid) return;
+    const localDataForShared = load();
+    const cloudCategoriesForShared = cloudRecord && cloudRecord.data && Array.isArray(cloudRecord.data.categories)
+      ? cloudRecord.data.categories : [];
+    const sharedCategories = await auth.mergeSharedCategories([
+      ...UNIVERSAL_CATEGORIES,
+      ...(Array.isArray(localDataForShared.categories) ? localDataForShared.categories : []),
+      ...cloudCategoriesForShared
+    ]);
+    if(currentUser?.uid !== uid) return;
+    data.categories = [...new Set([
+      ...UNIVERSAL_CATEGORIES,
+      ...(Array.isArray(sharedCategories) ? sharedCategories : []),
+      ...(Array.isArray(data.categories) ? data.categories : [])
+    ])];
+    localStorage.setItem(KEY, JSON.stringify(data));
     if(cloudRecord && cloudRecord.data && typeof cloudRecord.data === "object"){
-      // Cloud is the source of truth when this account already has saved data.
-      data = { ...structuredClone(defaultData), ...cloudRecord.data };
+      // Cloud remains the source of truth for financial records, but categories and
+      // account types are merged so presets and custom entries from this device
+      // are not lost when signing in on a new/previously-used account.
+      const localData = load();
+      const cloudData = cloudRecord.data;
+      const mergedData = { ...structuredClone(defaultData), ...cloudData };
+      mergedData.categories = [...new Set([
+        ...UNIVERSAL_CATEGORIES,
+        ...(Array.isArray(sharedCategories) ? sharedCategories : []),
+        ...(Array.isArray(localData.categories) ? localData.categories : []),
+        ...(Array.isArray(cloudData.categories) ? cloudData.categories : [])
+      ].map(x => String(x || "").trim()).filter(Boolean))];
+      mergedData.accountTypes = [...new Set([
+        ...UNIVERSAL_ACCOUNT_TYPES,
+        ...(Array.isArray(localData.accountTypes) ? localData.accountTypes : []),
+        ...(Array.isArray(cloudData.accountTypes) ? cloudData.accountTypes : [])
+      ].map(x => String(x || "").trim()).filter(Boolean))];
+      mergedData.presetVersion = DATA_PRESET_VERSION;
+      data = mergedData;
       syncAutoGoalDeposits();
       localStorage.setItem(KEY, JSON.stringify(data));
+      // Write the merged category/account-type lists back so they exist in Firestore too.
+      await auth.writeUserData(uid, data);
+      if(currentUser?.uid !== uid) return;
       render();
       cloudReadyForUid = uid;
-      toast("Your data is synced from the cloud.");
+      toast("Your data synced. Shared categories are available to everyone.");
     }else{
       // First sign-in: migrate this browser's existing data to Firestore.
       await auth.writeUserData(uid, data);
@@ -1395,7 +1430,7 @@ function editAccount(id){openAccount(id);}
 
 function openAccountType(){modal("Add Account Type",`<form id="accountTypeForm" class="form-grid"><div class="field full"><label>Account type name</label><input name="name" required placeholder="e.g. UPI Wallet, Loan, FD"></div><button class="primary full">Add Account Type</button></form>`);$("accountTypeForm").onsubmit=e=>{e.preventDefault();const n=new FormData(e.target).get("name").trim();if(!n)return;if(!data.accountTypes)data.accountTypes=[];if(data.accountTypes.some(x=>x.toLowerCase()===n.toLowerCase()))return toast("Account type already exists.");data.accountTypes.push(n);save();closeModal();render();toast("Account type added.");}}
 function deleteAccountType(type){if((data.accountTypes||[]).length<=1)return toast("Keep at least one account type.");if(data.accounts.some(a=>a.type===type))return toast("This account type is currently in use.");if(confirm(`Delete account type "${type}"?`)){data.accountTypes=data.accountTypes.filter(x=>x!==type);save();render();toast("Account type deleted.");}}
-function openCategory(){modal("Add Category",`<form id="catForm" class="form-grid"><div class="field full"><label>Category name</label><input name="name" required placeholder="e.g. Travel"></div><button class="primary full">Add Category</button></form>`);$("catForm").onsubmit=e=>{e.preventDefault();const n=new FormData(e.target).get("name").trim();if(n&&!data.categories.includes(n)){data.categories.push(n);save();closeModal();render();toast("Category added.");}}}
+function openCategory(){modal("Add Category",`<form id="catForm" class="form-grid"><div class="field full"><label>Category name</label><input name="name" required placeholder="e.g. Travel"></div><p class="muted full">New categories are shared with other users when you are signed in with Google.</p><button class="primary full">Add Category</button></form>`);$("catForm").onsubmit=async e=>{e.preventDefault();const n=new FormData(e.target).get("name").trim();if(n&&!data.categories.some(c=>c.toLowerCase()===n.toLowerCase())){data.categories.push(n);save();closeModal();render();if(currentUser&&cloudReadyForUid===currentUser.uid){try{const auth=await loadAuthApi();const shared=await auth.mergeSharedCategories([n]);data.categories=[...new Set([...data.categories,...shared])];save();render();toast("Category added and shared with everyone.");}catch(err){console.error("Shared category publish failed:",err);toast("Category saved to your account, but sharing failed. Check Firestore rules.");}}else{toast("Category added on this device. Sign in with Google to share it.");}}else{toast("This category already exists.");}}}
 function openGoal(){
   const options=data.accounts.map(a=>`<option value="${a.id}">${accountLabel(a)} available</option>`).join("");
   modal("Add Goal",`<form id="goalForm" class="form-grid">

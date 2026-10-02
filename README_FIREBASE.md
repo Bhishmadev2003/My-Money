@@ -99,3 +99,8 @@ The app now reads and writes each signed-in user's data in Firestore at `users/{
 6. Sign in with Google. If this Google account already has cloud data, that cloud data loads. On first sign-in, the current browser's local data is uploaded to the account.
 
 A successful save should show **“Saved and synced to your Google account.”** If it says cloud sync failed, open the browser developer console and check the Firebase error. Data continues to be stored locally as a fallback. Local browser data is not automatically merged into an account that already has cloud data, so export a backup first if you need to preserve data from multiple devices.
+
+
+## Shared categories across users
+
+The app includes a built-in universal category list for every user. When a user signs in with Google, the app also merges their existing local/account categories into the shared Firestore document `sharedSettings/categoryCatalog`. Newly added categories are published to that shared catalog and become available to other signed-in users. User transactions, accounts, budgets, loans, goals, and other financial records remain in the private `users/{uid}` document. Publish the included `firestore.rules` to enable the shared catalog.
