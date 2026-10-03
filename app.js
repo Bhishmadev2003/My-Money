@@ -597,6 +597,25 @@ function metric(title,value,note,values=[],opts={}){
   </div>`
 }
 
+
+function spendingDonut(categories,total,amountHtml){
+  const items=(categories||[]).filter(([,v])=>Number(v)>0).slice(0,8);
+  const sumValue=items.reduce((s,[,v])=>s+Number(v||0),0)||Number(total||0);
+  if(!sumValue){
+    return `<div class="hero-donut interactive-donut empty-donut"><div><strong class="donut-amount">${amountHtml}</strong><small>Total spent</small></div></div>`;
+  }
+  const r=44,c=2*Math.PI*r;
+  let used=0;
+  const rings=items.map(([cat,val],i)=>{
+    const frac=Number(val||0)/sumValue;
+    const seg=Math.max(0,c*frac-2.4);
+    const offset=-used*c;
+    used+=frac;
+    return `<circle class="donut-slice donut-slice-${i%8}" cx="60" cy="60" r="${r}" pathLength="${c.toFixed(3)}" stroke-dasharray="${seg.toFixed(3)} ${(c-seg).toFixed(3)}" stroke-dashoffset="${offset.toFixed(3)}" data-category-drill="${esc(encodeURIComponent(cat))}" tabindex="0" role="button" aria-label="${esc(cat)} ${Math.round(frac*100)} percent"><title>${esc(cat)} · ${money(val)} · ${Math.round(frac*100)}%</title></circle>`;
+  }).join("");
+  return `<div class="hero-donut interactive-donut"><svg viewBox="0 0 120 120" aria-label="Spending by category"><circle class="donut-track" cx="60" cy="60" r="${r}"/>${rings}</svg><div><strong class="donut-amount">${amountHtml}</strong><small>Total spent</small></div></div>`;
+}
+
 function dashboard(){
   const mt=monthTx(), currentWt=weekTx(0), wt=weekTx(dashboardWeekOffset), income=sum(mt,"income"), expense=sum(mt,"expense"), savings=income-expense;
   const weekly=sum(wt,"expense");
@@ -661,9 +680,9 @@ function dashboard(){
     <div class="hero-insights card">
       <div class="section-row"><h2>Spending Analytics</h2><button class="range-btn active" data-page-go="analytics">This Month</button></div>
       <div class="hero-analytics-body">
-        <div class="hero-donut" style="--spent:${Math.min(100,spentTotal?100:0)}"><div><strong class="donut-amount">${moneyParts(expense)}</strong><small>Total spent</small></div></div>
+        ${spendingDonut(topCats,spentTotal,moneyParts(expense))}
         <div class="hero-category-list">
-          ${topCats.map(([c,v])=>`<div><span>${categoryLabel(c)}</span><strong>${spentTotal?Math.round(v/spentTotal*100):0}%</strong></div>`).join("")||'<div><span>No spending yet</span><strong>0%</strong></div>'}
+          ${topCats.map(([c,v])=>`<button type="button" class="hero-category-row category-drill-trigger" data-category-drill="${esc(encodeURIComponent(c))}"><span>${categoryLabel(c)}</span><strong>${spentTotal?Math.round(v/spentTotal*100):0}%</strong></button>`).join("")||'<div><span>No spending yet</span><strong>0%</strong></div>'}
         </div>
       </div>
       <div class="hero-chip-row">

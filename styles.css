@@ -6796,3 +6796,24 @@ html[data-theme="gradient"] .account-card-stack span:nth-child(3){
     box-shadow:0 18px 34px rgba(47,91,232,.35)!important;
   }
 }
+
+/* V63 mobile account alignment + interactive spending donut */
+.interactive-donut{position:relative!important;background:none!important;isolation:isolate;cursor:default}
+.interactive-donut svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg);overflow:visible}
+.interactive-donut .donut-track{fill:none;stroke:rgba(113,112,190,.13);stroke-width:16}
+.interactive-donut .donut-slice{fill:none;stroke-width:16;stroke-linecap:butt;cursor:pointer;transition:stroke-width .16s ease,filter .16s ease,opacity .16s ease}
+.interactive-donut .donut-slice:hover,.interactive-donut .donut-slice:focus{stroke-width:20;filter:drop-shadow(0 4px 7px rgba(74,82,180,.24));outline:none;opacity:.9}
+.interactive-donut .donut-slice-0{stroke:#7367f0}.interactive-donut .donut-slice-1{stroke:#26c6a3}.interactive-donut .donut-slice-2{stroke:#ffc45b}.interactive-donut .donut-slice-3{stroke:#ff6485}.interactive-donut .donut-slice-4{stroke:#31b7df}.interactive-donut .donut-slice-5{stroke:#9d7bea}.interactive-donut .donut-slice-6{stroke:#ff9f43}.interactive-donut .donut-slice-7{stroke:#55c46f}
+.interactive-donut>div{position:relative;z-index:2;pointer-events:none}
+.hero-category-list .hero-category-row{width:100%;border:0;background:transparent;color:inherit;display:flex;justify-content:space-between;align-items:center;text-align:left;font:inherit;cursor:pointer;border-radius:14px;padding:0 10px}
+.hero-category-list .hero-category-row:hover{background:rgba(90,104,220,.07)}
+
+@media(max-width:700px){
+  html[data-theme="gradient"] .accounts-modern-grid.wallet-card-grid{justify-items:center!important;justify-content:center!important;width:100%!important;margin-left:auto!important;margin-right:auto!important}
+  html[data-theme="gradient"] .wallet-account-card{max-width:100%!important;width:100%!important;margin-left:auto!important;margin-right:auto!important}
+  html[data-theme="gradient"] .account-add-card{max-width:100%!important;width:100%!important;margin-left:auto!important;margin-right:auto!important}
+  html[data-theme="gradient"] .mobile-nav{padding-left:8px!important;padding-right:8px!important;justify-content:space-between!important}
+  html[data-theme="gradient"] .mobile-nav button{flex:1!important;min-width:0!important;background:transparent!important}
+  html[data-theme="gradient"] .mobile-nav .mobile-add{flex:0 0 58px!important;min-width:58px!important;background:linear-gradient(135deg,#3478f6,#1bbad9)!important;color:#fff!important;border:0!important;box-shadow:0 14px 30px rgba(52,120,246,.30)!important}
+  html[data-theme="gradient"] .mobile-nav .mobile-add svg{stroke:#fff!important}
+}
