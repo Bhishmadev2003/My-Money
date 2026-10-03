@@ -1167,6 +1167,22 @@ function settings(){return `<div class="settings-page">
 </div>`}
 
 document.addEventListener("click",e=>{
+  // Account action buttons are handled with delegated events so they remain reliable
+  // after every render and on touch/mobile browsers.
+  const editAccountBtn=e.target.closest?.("[data-edit-account]");
+  if(editAccountBtn){
+    e.preventDefault();
+    e.stopPropagation();
+    editAccount(editAccountBtn.dataset.editAccount);
+    return;
+  }
+  const deleteAccountBtn=e.target.closest?.("[data-delete-account]");
+  if(deleteAccountBtn){
+    e.preventDefault();
+    e.stopPropagation();
+    deleteAccount(deleteAccountBtn.dataset.deleteAccount);
+    return;
+  }
   const txTab=e.target.closest?.(".tx-tabs [data-tab]");
   if(txTab){
     e.preventDefault();
