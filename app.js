@@ -395,6 +395,7 @@ function accountCard(a,mode="dashboard"){
     <div class="wallet-card-top">
       <div class="account-brand">${accountVisual(a)}<div><strong>${esc(a.name)}</strong><small>${accountTypeLabel(a.type)}</small></div></div>
       <div class="wallet-network"><i></i><i></i></div>
+      <button type="button" class="account-card-menu-btn" data-edit-account="${a.id}" aria-label="Edit ${esc(a.name)}" title="Edit account">⋮</button>
     </div>
     <div class="wallet-balance"><small>Balance</small><strong>${money(a.balance)}</strong></div>
     <div class="wallet-number"><span>${accountMaskedNumber(a)}</span><em>${accountNetwork(a)}</em></div>

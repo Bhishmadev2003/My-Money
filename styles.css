@@ -6483,17 +6483,8 @@ html[data-theme="gradient"] .wallet-card-footer{
 }
 html[data-theme="gradient"] .wallet-account-card .wallet-card-top::after,
 html[data-theme="gradient"] .dashboard-account-card .wallet-card-top::after{
-  content:"⋮";
-  position:absolute;
-  right:18px;
-  top:72px;
-  width:16px;
-  height:24px;
-  z-index:3;
-  color:rgba(255,255,255,.82);
-  font-size:16px;
-  line-height:20px;
-  text-align:center;
+  content:none!important;
+  display:none!important;
 }
 html[data-theme="gradient"] .wallet-include{
   position:absolute!important;
@@ -6849,5 +6840,49 @@ html[data-theme="gradient"] .account-card-stack span:nth-child(3){
     place-items:center!important;
     font-size:24px!important;
     line-height:1!important;
+  }
+}
+
+
+/* V65 real clickable account three-dot edit control */
+.account-card-menu-btn{display:none}
+html[data-theme="gradient"] .wallet-account-card .account-card-menu-btn,
+html[data-theme="gradient"] .dashboard-account-card .account-card-menu-btn{
+  display:grid!important;
+  place-items:center!important;
+  position:absolute!important;
+  right:10px!important;
+  top:66px!important;
+  width:34px!important;
+  height:38px!important;
+  padding:0!important;
+  margin:0!important;
+  border:0!important;
+  border-radius:10px!important;
+  background:transparent!important;
+  color:rgba(255,255,255,.94)!important;
+  font:800 20px/1 Arial,sans-serif!important;
+  cursor:pointer!important;
+  pointer-events:auto!important;
+  touch-action:manipulation!important;
+  z-index:50!important;
+  -webkit-tap-highlight-color:transparent;
+}
+html[data-theme="gradient"] .wallet-account-card .account-card-menu-btn:hover,
+html[data-theme="gradient"] .dashboard-account-card .account-card-menu-btn:hover,
+html[data-theme="gradient"] .wallet-account-card .account-card-menu-btn:focus-visible,
+html[data-theme="gradient"] .dashboard-account-card .account-card-menu-btn:focus-visible{
+  background:rgba(255,255,255,.18)!important;
+  outline:2px solid rgba(255,255,255,.72)!important;
+  outline-offset:1px!important;
+}
+@media(max-width:700px){
+  html[data-theme="gradient"] .wallet-account-card .account-card-menu-btn,
+  html[data-theme="gradient"] .dashboard-account-card .account-card-menu-btn{
+    right:8px!important;
+    top:62px!important;
+    width:42px!important;
+    height:44px!important;
+    font-size:24px!important;
   }
 }
