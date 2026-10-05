@@ -5408,3 +5408,15 @@ html[data-theme="gradient"] .goal-plan-total{
     grid-template-columns:1fr!important;
   }
 }
+
+/* Edit Account destructive action */
+.account-delete-zone{
+  margin-top:10px;
+  padding-top:16px;
+  border-top:1px solid rgba(255,110,110,.22);
+  gap:10px;
+}
+.account-delete-zone>div{display:flex;flex-direction:column;gap:4px}
+.account-delete-zone>div>strong{color:#d94343;font-size:12px}
+.account-delete-zone .danger{background:#fff1f1;color:#c62d2d;border:1px solid #ffc9c9;font-weight:700}
+.account-delete-zone .danger:hover{background:#ffe4e4}

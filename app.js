@@ -1492,8 +1492,11 @@ function saveTransaction(f){
 function nextEmiDate(day,current){ if(!current)return null; const d=new Date(current+"T12:00:00"); d.setMonth(d.getMonth()+1); return new Date(d.getFullYear(),d.getMonth(),Math.min(28,Number(day||1))).toISOString().slice(0,10); }
 function openAccount(editId=null){
   const existing=editId?data.accounts.find(a=>a.id===editId):null; const a=existing||{}; const types=data.accountTypes||[];
-  modal(existing?"Edit Account":"Add Account",`<form id="accountForm" class="form-grid"><div class="field full"><label>Account name</label><input name="name" value="${esc(a.name||"")}" required placeholder="e.g. HDFC Bank"></div><div class="field"><label>Account type</label><select name="type">${types.map(t=>accountTypeOption(t,t===a.type)).join("")}</select></div><div class="field"><label>Current balance</label><input name="balance" type="number" step="0.01" value="${Number(a.balance||0)}"></div><div class="field full"><label>Logo URL <span class="muted">(optional)</span></label><input name="logo" value="${esc(a.logo||"")}" placeholder="https://.../logo.png"><small class="muted">Leave empty and MoneyPilot will automatically choose an emoji/icon based on the account name and type.</small></div><div class="field full"><label class="checkbox-row"><input type="checkbox" name="includeInTotal" ${a.includeInTotal!==false?'checked':''}> <span>Include this account in Total Money</span></label><small class="muted">Turn this off for credit cards or money you don't want treated as your actual available money.</small></div><button class="primary full">${existing?"Save Changes":"Save Account"}</button></form>`);
-  $("accountForm").onsubmit=e=>{e.preventDefault();const f=new FormData(e.target);const name=f.get("name").trim();if(!name)return; if(existing){existing.name=name;existing.type=f.get("type");existing.balance=Number(f.get("balance")||0);existing.logo=f.get("logo").trim()||null;existing.includeInTotal=f.get("includeInTotal")==="on";}else data.accounts.push({id:uid("a"),name,type:f.get("type"),balance:Number(f.get("balance")||0),logo:f.get("logo").trim()||null,includeInTotal:f.get("includeInTotal")==="on"});save();closeModal();render();toast(existing?"Account updated.":"Account added.");}
+  const deleteSection=existing?`<div class="field full account-delete-zone"><div><strong>Delete account</strong><small class="muted">The account will be removed, but its past transactions will remain in your history.</small></div><button type="button" class="danger full" id="deleteAccountFromEdit">Delete Account</button></div>`:"";
+  modal(existing?"Edit Account":"Add Account",`<form id="accountForm" class="form-grid"><div class="field full"><label>Account name</label><input name="name" value="${esc(a.name||"")}" required placeholder="e.g. HDFC Bank"></div><div class="field"><label>Account type</label><select name="type">${types.map(t=>accountTypeOption(t,t===a.type)).join("")}</select></div><div class="field"><label>Current balance</label><input name="balance" type="number" step="0.01" value="${Number(a.balance||0)}"></div><div class="field full"><label>Logo URL <span class="muted">(optional)</span></label><input name="logo" value="${esc(a.logo||"")}" placeholder="https://.../logo.png"><small class="muted">Leave empty and MoneyPilot will automatically choose an emoji/icon based on the account name and type.</small></div><div class="field full"><label class="checkbox-row"><input type="checkbox" name="includeInTotal" ${a.includeInTotal!==false?'checked':''}> <span>Include this account in Total Money</span></label><small class="muted">Turn this off for credit cards or money you don't want treated as your actual available money.</small></div><button class="primary full">${existing?"Save Changes":"Save Account"}</button>${deleteSection}</form>`);
+  $("accountForm").onsubmit=e=>{e.preventDefault();const f=new FormData(e.target);const name=f.get("name").trim();if(!name)return; if(existing){existing.name=name;existing.type=f.get("type");existing.balance=Number(f.get("balance")||0);existing.logo=f.get("logo").trim()||null;existing.includeInTotal=f.get("includeInTotal")==="on";}else data.accounts.push({id:uid("a"),name,type:f.get("type"),balance:Number(f.get("balance")||0),logo:f.get("logo").trim()||null,includeInTotal:f.get("includeInTotal")==="on"});save();closeModal();render();toast(existing?"Account updated.":"Account added.");};
+  const deleteBtn=$("deleteAccountFromEdit");
+  if(deleteBtn&&existing) deleteBtn.onclick=()=>deleteAccount(existing.id,true);
 }
 function editAccount(id){openAccount(id);}
 
@@ -1786,7 +1789,33 @@ function deleteTx(id){
   save();render();toast("Transaction deleted and balances reversed.");
 }
 function deleteLoan(id){if(!confirm("Delete this loan record?"))return;data.loans=(data.loans||[]).filter(l=>l.id!==id);save();render();toast("Loan deleted.");}
-function deleteAccount(id){if(data.accounts.length<=1)return toast("Keep at least one account.");if(confirm("Delete this account?")){data.accounts=data.accounts.filter(a=>a.id!==id);save();render();}}
+function deleteAccount(id,fromEdit=false){
+  const account=data.accounts.find(a=>a.id===id);
+  if(!account)return toast("Account not found.");
+  if(data.accounts.length<=1)return toast("Keep at least one account.");
+
+  const linkedGoals=(data.goals||[]).filter(g=>g.accountId===id);
+  const linkedEmis=(data.emis||[]).filter(e=>e.paymentAccount===id);
+  if(linkedGoals.length||linkedEmis.length){
+    const parts=[];
+    if(linkedGoals.length)parts.push(`${linkedGoals.length} goal${linkedGoals.length===1?"":"s"}`);
+    if(linkedEmis.length)parts.push(`${linkedEmis.length} EMI${linkedEmis.length===1?"":"s"}`);
+    toast(`Cannot delete ${account.name}. Reassign or remove the linked ${parts.join(" and ")} first.`);
+    return;
+  }
+
+  const txCount=(data.transactions||[]).filter(t=>t.accountId===id||t.fromAccountId===id||t.toAccountId===id||t.goalAccountId===id).length;
+  const message=txCount
+    ? `Delete “${account.name}”?\n\n${txCount} past transaction${txCount===1?"":"s"} use this account. Those transactions will stay in your history, but the account itself will be removed.`
+    : `Delete “${account.name}”? This account will be removed permanently.`;
+  if(!confirm(message))return;
+
+  data.accounts=data.accounts.filter(a=>a.id!==id);
+  save();
+  if(fromEdit)closeModal();
+  render();
+  toast("Account deleted.");
+}
 function exportBackup(){const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="moneypilot-backup.json";a.click();URL.revokeObjectURL(a.href);toast("Backup exported.");}
 function importBackup(e){const file=e.target.files[0];if(!file)return;const r=new FileReader();r.onload=()=>{try{const x=JSON.parse(r.result);if(!x.accounts||!x.transactions)throw Error();data=x;save();render();toast("Backup imported.")}catch{toast("Invalid backup file.")}};r.readAsText(file);}
 
