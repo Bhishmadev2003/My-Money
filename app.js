@@ -1446,14 +1446,7 @@ function openTransaction(){
   <div class="field income-only hidden-field"><label>To Account</label>${customPicker("incomeAccountId",accounts,"","Add an account first")}</div>
   <div class="field transfer-only hidden-field"><label>From Account</label>${customPicker("fromId",accounts,"","Add an account first")}</div>
   <div class="field transfer-only hidden-field"><label>To Account</label>${customPicker("toId",accounts,data.accounts[1]?.id||"","Add an account first")}</div>
-  <div class="field transfer-only hidden-field full"><label>Should this transfer count as an expense?</label>
-    <div class="tabs transfer-expense-choice">
-      <button type="button" class="active" data-transfer-expense="no">No · Internal transfer</button>
-      <button type="button" data-transfer-expense="yes">Yes · Count as expense</button>
-    </div>
-    <input type="hidden" name="transferAsExpense" value="no">
-    <small class="muted">Use “Yes” for cases such as paying a credit card from a bank account. The money will still move to the selected account, but it will also be included in Expenses and Spending Analytics.</small>
-  </div>
+  <div class="field transfer-only hidden-field full"><label class="checkbox-row"><input type="checkbox" name="transferAsExpense" value="yes"> <span>Count as expense</span></label></div>
   <div class="field emi-only hidden-field full"><label>Which EMI?</label>${customPicker("emiId",emiItems,"","Select EMI")}</div>
   <div class="field emi-only hidden-field"><label>Category</label>${customPicker("emiCategory",cats,"Bills & Utilities","Select category")}</div>
   <div class="field emi-only hidden-field"><label>From Account</label>${customPicker("emiAccountId",accounts,"","Add an account first")}</div>
@@ -1469,14 +1462,6 @@ function openTransaction(){
       e.preventDefault();
       e.stopPropagation();
       switchTab(btn.dataset.tab);
-    });
-  });
-  document.querySelectorAll(".transfer-expense-choice [data-transfer-expense]").forEach(btn=>{
-    btn.addEventListener("click",e=>{
-      e.preventDefault();
-      const form=$("txForm"); if(!form)return;
-      form.querySelectorAll(".transfer-expense-choice [data-transfer-expense]").forEach(b=>b.classList.toggle("active",b===btn));
-      const input=form.querySelector('[name="transferAsExpense"]'); if(input)input.value=btn.dataset.transferExpense;
     });
   });
   $("txForm").onsubmit=e=>{e.preventDefault();const fd=new FormData(e.target);fd.set("type",e.target.dataset.txType||"expense");saveTransaction(fd);};
@@ -1718,19 +1703,11 @@ function editTransaction(id){
     <div class="field"><label>Date</label><input name="date" type="date" value="${esc(t.date||today())}" required></div>
     <div class="field"><label>Time</label><input name="time" type="time" value="${esc((txDateTime(t).split("T")[1]||"00:00").slice(0,5))}" required></div>
     <div class="field"><label>Category</label><select name="category">${cats}</select></div>
-    ${isTransferTransaction(t)?`<div class="field full"><label>Should this transfer count as an expense?</label><div class="tabs transfer-expense-choice edit-transfer-expense-choice"><button type="button" data-transfer-expense="no" class="${isExpenseTransaction(t)?"":"active"}">No · Internal transfer</button><button type="button" data-transfer-expense="yes" class="${isExpenseTransaction(t)?"active":""}">Yes · Count as expense</button></div><input type="hidden" name="transferAsExpense" value="${isExpenseTransaction(t)?"yes":"no"}"></div>`:""}
+    ${isTransferTransaction(t)?`<div class="field full"><label class="checkbox-row"><input type="checkbox" name="transferAsExpense" value="yes" ${isExpenseTransaction(t)?"checked":""}> <span>Count as expense</span></label></div>`:""}
     <div class="field full"><label>Note</label><input name="note" value="${esc(t.note||"")}" placeholder="Optional note"></div>
     <div class="field full"><small class="muted">${t.type==="transfer"?"Transfer accounts cannot be changed here.":t.type==="goal"?"The linked goal/account stays fixed to protect goal balances.":t.type==="expense"&&t.emiId?"The linked EMI/account stays fixed; use Edit on the EMI card to change the loan itself.":account?`Account: ${esc(account.name)}`:"Account: Unassigned"}</small></div>
     <button class="primary full">Save Changes</button>
   </form>`);
-  document.querySelectorAll(".edit-transfer-expense-choice [data-transfer-expense]").forEach(btn=>{
-    btn.addEventListener("click",e=>{
-      e.preventDefault();
-      const form=$("editTxForm"); if(!form)return;
-      form.querySelectorAll(".edit-transfer-expense-choice [data-transfer-expense]").forEach(b=>b.classList.toggle("active",b===btn));
-      const input=form.querySelector('[name="transferAsExpense"]'); if(input)input.value=btn.dataset.transferExpense;
-    });
-  });
   $("editTxForm").onsubmit=e=>{
     e.preventDefault(); const f=new FormData(e.target); const newAmount=Number(f.get("amount"));
     if(!newAmount||newAmount<=0)return toast("Enter a valid amount.");
