@@ -305,7 +305,23 @@ function weekTx(offset=0){
   const r=weekRange(offset);
   return data.transactions.filter(t=>{ const d=normalizedTxDate(t); return d && d>=r.from && d<=r.to; });
 }
-function sum(list,type){ return list.filter(t=>t.type===type).reduce((s,t)=>s+Number(t.amount),0); }
+function isTransferTransaction(t){
+  if(!t) return false;
+  if(t.type==="transfer" || t.transactionKind==="transfer") return true;
+  if(t.fromAccountId && t.toAccountId && t.fromAccountId!==t.toAccountId) return true;
+  if(t.toAccountName && t.accountName && String(t.toAccountName)!==String(t.accountName)) return true;
+  const category=String(t.category||"").trim().toLowerCase();
+  return category==="transfer" || category==="account transfer" || category==="account to account transfer" || category==="internal transfer";
+}
+function isExpenseTransaction(t){
+  if(!t) return false;
+  if(isTransferTransaction(t)) return t.countAsExpense===true || t.countAsExpense==="true" || t.countAsExpense===1;
+  return t.type==="expense";
+}
+function sum(list,type){
+  const filtered=type==="expense" ? list.filter(isExpenseTransaction) : list.filter(t=>t.type===type);
+  return filtered.reduce((s,t)=>s+Number(t.amount||0),0);
+}
 function greeting(){ const h=new Date().getHours(); if(h<5) return "Good night"; if(h<12) return "Good morning"; if(h<17) return "Good afternoon"; if(h<21) return "Good evening"; return "Good night"; }
 function goalMonthsRemaining(g){
   if(!g.targetDate) return null;
@@ -624,7 +640,7 @@ function dashboard(){
   const plan=overallGoalPlan();
   const upcoming=upcomingCommitments7();
   const nextEmi=upcomingEmis()[0];
-  const budgetUsed=data.budgets.reduce((total,b)=>total+(monthTx().filter(t=>t.category===b.category&&t.type==="expense").reduce((s,t)=>s+Number(t.amount),0)),0);
+  const budgetUsed=data.budgets.reduce((total,b)=>total+(monthTx().filter(t=>t.category===b.category&&isExpenseTransaction(t)).reduce((s,t)=>s+Number(t.amount),0)),0);
   const budgetLimit=data.budgets.reduce((total,b)=>total+Number(b.limit||0),0);
   const budgetPct=Math.min(100,budgetLimit?budgetUsed/budgetLimit*100:0);
   const range=weekRange(dashboardWeekOffset);
@@ -647,12 +663,12 @@ function dashboard(){
       <text x="${x}" y="${svgH-3}" text-anchor="middle" class="chart-date">${p.date.getDate()} ${p.date.toLocaleString("en-IN",{month:"short"})}</text>`;
   }).join("");
   const grids=[0,.33,.66,1].map(v=>{const y=padTop+v*(svgH-padTop-padBottom);return `<line x1="${padX}" x2="${svgW-padX}" y1="${y}" y2="${y}" class="chart-grid"/>`}).join("");
-  const topCats=Object.entries(mt.filter(t=>t.type==="expense").reduce((acc,t)=>{const key=t.category||"Other";acc[key]=(acc[key]||0)+Number(t.amount||0);return acc;},{})).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const topCats=Object.entries(mt.filter(isExpenseTransaction).reduce((acc,t)=>{const key=t.category||"Other";acc[key]=(acc[key]||0)+Number(t.amount||0);return acc;},{})).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const spentTotal=topCats.reduce((s,[,v])=>s+v,0);
   const trendBars=[5,4,3,2,1,0].map(i=>{
     const m=new Date(new Date().getFullYear(),new Date().getMonth()-i,1);
     const key=`${m.getFullYear()}-${String(m.getMonth()+1).padStart(2,"0")}`;
-    const amount=data.transactions.filter(t=>t.type==="expense"&&String(t.date||"").startsWith(key)).reduce((s,t)=>s+Number(t.amount||0),0);
+    const amount=data.transactions.filter(t=>isExpenseTransaction(t)&&String(t.date||"").startsWith(key)).reduce((s,t)=>s+Number(t.amount||0),0);
     const monthIncome=data.transactions.filter(t=>t.type==="income"&&String(t.date||"").startsWith(key)).reduce((s,t)=>s+Number(t.amount||0),0);
     return {label:m.toLocaleDateString("en-IN",{month:"short"}),amount,income:monthIncome,saving:monthIncome-amount};
   });
@@ -734,8 +750,10 @@ function dashboard(){
   </div>`;
 }
 function transactionRow(t){
-  const sign=t.type==="income"?"+":t.type==="expense"?"−":t.type==="goal"?"↗":"⇄";
-  return `<div class="list-row"><div><strong>${sign} ${money(t.amount)} · ${categoryLabel(t.category||"Transfer")}</strong><small>${esc(t.note||"")} ${t.note?"· ":""}${esc(txDisplayDateTime(t))} · ${accountLabelByName(t.accountName||"")}${t.toAccountName?` → ${accountLabelByName(t.toAccountName)}`:""}</small></div><span class="${t.type}">${t.type}</span></div>`;
+  const displayType=isTransferTransaction(t)?"transfer":t.type;
+  const sign=displayType==="income"?"+":displayType==="expense"?"−":displayType==="goal"?"↗":"⇄";
+  const transferExpenseNote=isTransferTransaction(t)&&isExpenseTransaction(t)?" · Counts as expense":"";
+  return `<div class="list-row"><div><strong>${sign} ${money(t.amount)} · ${categoryLabel(t.category||"Transfer")}</strong><small>${esc(t.note||"")} ${t.note?"· ":""}${esc(txDisplayDateTime(t))} · ${accountLabelByName(t.accountName||"")}${t.toAccountName?` → ${accountLabelByName(t.toAccountName)}`:""}${transferExpenseNote}</small></div><span class="${displayType}">${displayType}</span></div>`;
 }
 
 function accounts(){
@@ -755,7 +773,7 @@ function openCategoryTransactions(category){
   const monthStart=dateKey(new Date(new Date().getFullYear(),new Date().getMonth(),1));
   const from=analyticsFrom||monthStart,to=analyticsTo||today();
   const list=data.transactions
-    .filter(t=>t.type==="expense"&&(t.category||"Other")===category&&t.date>=from&&t.date<=to)
+    .filter(t=>isExpenseTransaction(t)&&(t.category||"Other")===category&&t.date>=from&&t.date<=to)
     .sort((a,b)=>txDateTime(b).localeCompare(txDateTime(a)));
   const total=list.reduce((s,t)=>s+Number(t.amount||0),0);
   modal(`${categoryEmoji(category)} ${category}`,`<div class="category-drill-modal">
@@ -777,10 +795,19 @@ function analytics(){
   const rangeTx=data.transactions.filter(t=>t.date>=from&&t.date<=to);
   const income=sum(rangeTx,"income"),expense=sum(rangeTx,"expense"),net=income-expense;
   const byCat={},byAccount={};
-  rangeTx.filter(t=>t.type==="expense").forEach(t=>byCat[t.category||"Other"]=(byCat[t.category||"Other"]||0)+Number(t.amount||0));
+  rangeTx.filter(isExpenseTransaction).forEach(t=>byCat[t.category||"Other"]=(byCat[t.category||"Other"]||0)+Number(t.amount||0));
   rangeTx.forEach(t=>{
+    const amount=Number(t.amount||0);
+    if(isTransferTransaction(t)){
+      const from=t.accountName||"Unassigned";
+      const to=t.toAccountName||"Unassigned";
+      byAccount[from]=(byAccount[from]||0)-amount;
+      byAccount[to]=(byAccount[to]||0)+amount;
+      return;
+    }
     const k=t.accountName||"Unassigned";
-    byAccount[k]=(byAccount[k]||0)+(t.type==="income"?Number(t.amount||0):-Number(t.amount||0));
+    if(t.type==="income") byAccount[k]=(byAccount[k]||0)+amount;
+    else if(isExpenseTransaction(t)||t.type==="goal") byAccount[k]=(byAccount[k]||0)-amount;
   });
 
   const sd=new Date(from+"T12:00:00"),ed=new Date(to+"T12:00:00");
@@ -794,7 +821,7 @@ function analytics(){
     }
     groups[key]??={label,income:0,expense:0};
     if(t.type==="income")groups[key].income+=Number(t.amount||0);
-    if(t.type==="expense")groups[key].expense+=Number(t.amount||0);
+    if(isExpenseTransaction(t))groups[key].expense+=Number(t.amount||0);
   });
   if(monthly){
     let d=new Date(sd.getFullYear(),sd.getMonth(),1),last=new Date(ed.getFullYear(),ed.getMonth(),1);
@@ -956,7 +983,7 @@ function goals(){
 function budgets(){
   const monthTransactions=monthTx();
   const totalLimit=data.budgets.reduce((s,b)=>s+Number(b.limit||0),0);
-  const totalSpent=data.budgets.reduce((s,b)=>s+monthTransactions.filter(t=>t.category===b.category&&t.type==="expense").reduce((x,t)=>x+Number(t.amount||0),0),0);
+  const totalSpent=data.budgets.reduce((s,b)=>s+monthTransactions.filter(t=>t.category===b.category&&isExpenseTransaction(t)).reduce((x,t)=>x+Number(t.amount||0),0),0);
   const overallPct=Math.min(100,totalLimit?totalSpent/totalLimit*100:0);
   return `<div class="money-section-page budgets-page"><div class="section-row page-head money-page-head"><div><span class="eyebrow">💰 SPENDING LIMITS</span><h2>Budgets</h2><p class="muted">Set category spending limits and track this month's usage.</p></div><button class="primary" data-action="add-budget">+ Add Budget</button></div>
   <div class="card budget-overview-card">
@@ -964,7 +991,7 @@ function budgets(){
     <div class="budget-overview-meter"><strong>${overallPct.toFixed(0)}%</strong><small>${money(Math.max(0,totalLimit-totalSpent))} left</small></div>
     <div class="progress"><i style="width:${overallPct}%"></i></div>
   </div>
-  <div class="budget-grid grid2">${data.budgets.map(b=>{const spent=monthTransactions.filter(t=>t.category===b.category&&t.type==="expense").reduce((s,t)=>s+Number(t.amount),0);const pct=Math.min(100,b.limit?spent/b.limit*100:0),left=Math.max(0,Number(b.limit||0)-spent),over=spent>Number(b.limit||0);return `<div class="card budget-card ${over?'budget-over':''}"><div class="section-row"><div class="budget-title"><span>${categoryEmoji(b.category)}</span><div><h2>${esc(b.category)}</h2><small>${over?'Over budget':'On track'}</small></div></div><button class="danger ghost" data-delete-budget="${b.id}">Delete</button></div><div class="budget-values"><strong>${money(spent)}</strong><span>/ ${money(b.limit)}</span></div><div class="progress"><i style="width:${pct}%"></i></div><div class="budget-foot"><span>${pct.toFixed(0)}% used</span><strong>${money(left)} left</strong></div></div>`}).join("")||'<div class="card empty section-empty-state"><div class="big-emoji">💰</div><strong>No budgets yet</strong><p class="muted">Add a category budget and track your monthly spending limits here.</p><button class="primary" data-action="add-budget">Create Budget</button></div>'}</div></div>`;
+  <div class="budget-grid grid2">${data.budgets.map(b=>{const spent=monthTransactions.filter(t=>t.category===b.category&&isExpenseTransaction(t)).reduce((s,t)=>s+Number(t.amount),0);const pct=Math.min(100,b.limit?spent/b.limit*100:0),left=Math.max(0,Number(b.limit||0)-spent),over=spent>Number(b.limit||0);return `<div class="card budget-card ${over?'budget-over':''}"><div class="section-row"><div class="budget-title"><span>${categoryEmoji(b.category)}</span><div><h2>${esc(b.category)}</h2><small>${over?'Over budget':'On track'}</small></div></div><button class="danger ghost" data-delete-budget="${b.id}">Delete</button></div><div class="budget-values"><strong>${money(spent)}</strong><span>/ ${money(b.limit)}</span></div><div class="progress"><i style="width:${pct}%"></i></div><div class="budget-foot"><span>${pct.toFixed(0)}% used</span><strong>${money(left)} left</strong></div></div>`}).join("")||'<div class="card empty section-empty-state"><div class="big-emoji">💰</div><strong>No budgets yet</strong><p class="muted">Add a category budget and track your monthly spending limits here.</p><button class="primary" data-action="add-budget">Create Budget</button></div>'}</div></div>`;
 }
 
 function formatEmiDate(value){
@@ -1419,6 +1446,14 @@ function openTransaction(){
   <div class="field income-only hidden-field"><label>To Account</label>${customPicker("incomeAccountId",accounts,"","Add an account first")}</div>
   <div class="field transfer-only hidden-field"><label>From Account</label>${customPicker("fromId",accounts,"","Add an account first")}</div>
   <div class="field transfer-only hidden-field"><label>To Account</label>${customPicker("toId",accounts,data.accounts[1]?.id||"","Add an account first")}</div>
+  <div class="field transfer-only hidden-field full"><label>Should this transfer count as an expense?</label>
+    <div class="tabs transfer-expense-choice">
+      <button type="button" class="active" data-transfer-expense="no">No · Internal transfer</button>
+      <button type="button" data-transfer-expense="yes">Yes · Count as expense</button>
+    </div>
+    <input type="hidden" name="transferAsExpense" value="no">
+    <small class="muted">Use “Yes” for cases such as paying a credit card from a bank account. The money will still move to the selected account, but it will also be included in Expenses and Spending Analytics.</small>
+  </div>
   <div class="field emi-only hidden-field full"><label>Which EMI?</label>${customPicker("emiId",emiItems,"","Select EMI")}</div>
   <div class="field emi-only hidden-field"><label>Category</label>${customPicker("emiCategory",cats,"Bills & Utilities","Select category")}</div>
   <div class="field emi-only hidden-field"><label>From Account</label>${customPicker("emiAccountId",accounts,"","Add an account first")}</div>
@@ -1434,6 +1469,14 @@ function openTransaction(){
       e.preventDefault();
       e.stopPropagation();
       switchTab(btn.dataset.tab);
+    });
+  });
+  document.querySelectorAll(".transfer-expense-choice [data-transfer-expense]").forEach(btn=>{
+    btn.addEventListener("click",e=>{
+      e.preventDefault();
+      const form=$("txForm"); if(!form)return;
+      form.querySelectorAll(".transfer-expense-choice [data-transfer-expense]").forEach(b=>b.classList.toggle("active",b===btn));
+      const input=form.querySelector('[name="transferAsExpense"]'); if(input)input.value=btn.dataset.transferExpense;
     });
   });
   $("txForm").onsubmit=e=>{e.preventDefault();const fd=new FormData(e.target);fd.set("type",e.target.dataset.txType||"expense");saveTransaction(fd);};
@@ -1463,7 +1506,8 @@ function saveTransaction(f){
     if(!from||!to||from.id===to.id)return toast("Choose two different accounts.");
     if(from.balance<amount)return toast("Insufficient balance in source account.");
     from.balance-=amount;to.balance+=amount;
-    data.transactions.push({id:uid("tx"),type,amount,date:f.get("date"),timestamp:`${f.get("date")}T${f.get("time")||"00:00"}`,note:f.get("note"),category:"Transfer",accountName:from.name,toAccountName:to.name,fromAccountId:from.id,toAccountId:to.id,transactionKind:"transfer"});
+    const countAsExpense=f.get("transferAsExpense")==="yes";
+    data.transactions.push({id:uid("tx"),type,amount,date:f.get("date"),timestamp:`${f.get("date")}T${f.get("time")||"00:00"}`,note:f.get("note"),category:"Transfer",accountName:from.name,toAccountName:to.name,fromAccountId:from.id,toAccountId:to.id,transactionKind:"transfer",countAsExpense});
   } else if(type==="expense"){
     const ac=data.accounts.find(a=>a.id===f.get("accountId")); if(!ac)return toast("Add an account first.");
     if(ac.balance<amount)return toast("Insufficient balance in this account.");
@@ -1674,10 +1718,19 @@ function editTransaction(id){
     <div class="field"><label>Date</label><input name="date" type="date" value="${esc(t.date||today())}" required></div>
     <div class="field"><label>Time</label><input name="time" type="time" value="${esc((txDateTime(t).split("T")[1]||"00:00").slice(0,5))}" required></div>
     <div class="field"><label>Category</label><select name="category">${cats}</select></div>
+    ${isTransferTransaction(t)?`<div class="field full"><label>Should this transfer count as an expense?</label><div class="tabs transfer-expense-choice edit-transfer-expense-choice"><button type="button" data-transfer-expense="no" class="${isExpenseTransaction(t)?"":"active"}">No · Internal transfer</button><button type="button" data-transfer-expense="yes" class="${isExpenseTransaction(t)?"active":""}">Yes · Count as expense</button></div><input type="hidden" name="transferAsExpense" value="${isExpenseTransaction(t)?"yes":"no"}"></div>`:""}
     <div class="field full"><label>Note</label><input name="note" value="${esc(t.note||"")}" placeholder="Optional note"></div>
     <div class="field full"><small class="muted">${t.type==="transfer"?"Transfer accounts cannot be changed here.":t.type==="goal"?"The linked goal/account stays fixed to protect goal balances.":t.type==="expense"&&t.emiId?"The linked EMI/account stays fixed; use Edit on the EMI card to change the loan itself.":account?`Account: ${esc(account.name)}`:"Account: Unassigned"}</small></div>
     <button class="primary full">Save Changes</button>
   </form>`);
+  document.querySelectorAll(".edit-transfer-expense-choice [data-transfer-expense]").forEach(btn=>{
+    btn.addEventListener("click",e=>{
+      e.preventDefault();
+      const form=$("editTxForm"); if(!form)return;
+      form.querySelectorAll(".edit-transfer-expense-choice [data-transfer-expense]").forEach(b=>b.classList.toggle("active",b===btn));
+      const input=form.querySelector('[name="transferAsExpense"]'); if(input)input.value=btn.dataset.transferExpense;
+    });
+  });
   $("editTxForm").onsubmit=e=>{
     e.preventDefault(); const f=new FormData(e.target); const newAmount=Number(f.get("amount"));
     if(!newAmount||newAmount<=0)return toast("Enter a valid amount.");
@@ -1719,6 +1772,7 @@ function editTransaction(id){
       }g.saved=newSaved;}
     }
     t.amount=newAmount;t.date=f.get("date");t.timestamp=`${f.get("date")}T${f.get("time")||"00:00"}`;t.note=f.get("note");if(t.type!=="transfer")t.category=f.get("category");
+    if(isTransferTransaction(t)) t.countAsExpense=f.get("transferAsExpense")==="yes";
     if(t.loanPaymentId){
       const loan=(data.loans||[]).find(l=>(l.payments||[]).some(p=>p.id===t.loanPaymentId));
       const payment=loan?.payments?.find(p=>p.id===t.loanPaymentId);
@@ -1915,7 +1969,7 @@ function importTimelyBills(e){
   e.target.value="";
 }
 function showImportPreview(rows,fileName){
-  const dates=rows.map(x=>x.date).sort(); const income=rows.filter(x=>x.type==="income").reduce((s,x)=>s+x.amount,0), expense=rows.filter(x=>x.type==="expense").reduce((s,x)=>s+x.amount,0);
+  const dates=rows.map(x=>x.date).sort(); const income=rows.filter(x=>x.type==="income").reduce((s,x)=>s+x.amount,0), expense=rows.filter(isExpenseTransaction).reduce((s,x)=>s+x.amount,0);
   modal("Import TimelyBills Data",`<div class="import-preview"><h3>${esc(fileName)}</h3><p class="muted">Found <strong>${rows.length}</strong> transactions${dates.length?` from ${esc(dates[0])} to ${esc(dates.at(-1))}`:""}.</p><div class="import-summary"><span>Income <strong class="income">${money(income)}</strong></span><span>Expenses <strong class="expense">${money(expense)}</strong></span></div><label class="check-row"><input id="importAdjustBalances" type="checkbox"> Update current account balances using imported transactions</label><p class="muted small">Recommended: leave this OFF when importing old history. This keeps your current real account balances unchanged while adding the history for Analytics and Weekly Spending.</p><button class="primary full" id="confirmTimelyImport">Import ${rows.length} transactions</button></div>`);
   $("confirmTimelyImport").onclick=()=>{
     const adjust=$("importAdjustBalances").checked;
@@ -1923,7 +1977,7 @@ function showImportPreview(rows,fileName){
     const existing=new Set(data.transactions.map(t=>[t.date,t.type,Number(t.amount||0),normalHeader(t.accountName),normalHeader(t.note)].join("|")));
     const fresh=rows.filter(t=>{const k=[t.date,t.type,Number(t.amount||0),normalHeader(t.accountName),normalHeader(t.note)].join("|"); if(existing.has(k)) return false; existing.add(k); return true;});
     if(adjust){
-      for(const t of fresh){const a=data.accounts.find(x=>normalHeader(x.name)===normalHeader(t.accountName));if(!a)continue;if(t.type==="income")a.balance+=t.amount;else if(t.type==="expense")a.balance-=t.amount;}
+      for(const t of fresh){const a=data.accounts.find(x=>normalHeader(x.name)===normalHeader(t.accountName));if(!a)continue;if(t.type==="income")a.balance+=t.amount;else if(isExpenseTransaction(t))a.balance-=t.amount;}
     }
     data.transactions.push(...fresh); save(); closeModal(); render(); toast(`${fresh.length} transactions imported${rows.length-fresh.length?` · ${rows.length-fresh.length} duplicate(s) skipped`:""}.`);
   };
